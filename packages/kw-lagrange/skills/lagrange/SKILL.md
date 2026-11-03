@@ -17,7 +17,7 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 
 - 文字、提及、引用、表情和组合消息：[references/messages.md](references/messages.md)。
 - 图片、语音、视频、文件和远程资源：[references/media.md](references/media.md)。
-- 转发、卡片、Markdown、XML、按钮和特殊片段：[references/rich.md](references/rich.md)。
+- 转发、卡片、XML、按钮和特殊片段：[references/rich.md](references/rich.md)。
 - 历史、人物、回应、戳一戳和资料管理：[references/social.md](references/social.md)。
 - 回执、错误与发送结果未知：[references/results.md](references/results.md)。
 
@@ -26,6 +26,8 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 `send_group_message` 的参数为 `{group_id, message:[{type,data}, ...], message_style?}`。私聊使用 `{user_id,message,message_style?}`。
 
 `message` 是片段数组。普通文字与图片可以按顺序组合。语音单独发送。发送消息使用实际工具调用，内部文字输出保存在自己的活动记录。
+
+不支持 Markdown 消息发送，包括群聊、私聊、临时会话及合并转发中的 `markdown` 片段。使用 `text` 片段发送普通文字。远程 Schema 中出现 `markdown` 也不能作为可用发送能力。
 
 当前输入中收到的媒体片段包含 `resource_id` 或 `temp_url`，发送片段需要有效的 `uri`。按媒体参考转换后使用。
 

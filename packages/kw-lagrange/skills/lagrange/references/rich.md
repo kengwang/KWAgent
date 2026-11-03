@@ -39,7 +39,7 @@ const forward = {
 | `music` | `type,id,url,audio,title,content,image` 全部为必填字符串 |
 | `share` | `url,title,content,image` 全部为必填字符串 |
 | `contact` | `contact_type:string,id:string` |
-| `markdown` | `content:string`，实际展示取决于 QQ 接受情况 |
+| `markdown` | 不支持发送；群聊、私聊、临时会话和转发节点均禁止使用 |
 | `xml` | `xml:string`，使用已验证载荷 |
 | `keyboard` | `data:string`，内容为按钮结构的 JSON 字符串 |
 | `market_face` | `face_id:number,name?,url?,summary?`；当前实现把 `url` 当作十六进制标识字节内容 |
@@ -52,6 +52,8 @@ const forward = {
 
 商城表情不能随意填入图片 URL。音乐类型没有根据歌曲 ID 自动查找播放地址的实现，需要自行获取真实地址。
 
-按钮、XML、Markdown、商城表情和结构化卡片具有编码路径，远程服务器和 QQ 客户端是否接受需要真实验证。没有明确发送上限校验不代表可以无限发送。
+Markdown 消息不受支持。需要表达标题、列表或代码内容时，使用 `text` 片段发送普通文字。
+
+按钮、XML、商城表情和结构化卡片具有编码路径，远程服务器和 QQ 客户端是否接受需要真实验证。没有明确发送上限校验不代表可以无限发送。
 
 `poke` 消息片段使用 `{type:number,strength?:number}`，仅适用于直接私人会话且必须独占消息。日常戳一戳优先选择相应交互工具。

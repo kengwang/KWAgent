@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
-import { asJson, errorText, jsonSchema, now, Store } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, jsonSchema, now, Store } from '@kwagent/core';
 import type { AppConfig, Json, Operation } from '@kwagent/core';
 
 const schemaObject = z.object({ type: z.literal('object') }).catchall(jsonSchema);
@@ -13,6 +13,21 @@ export const milkyToolSchema = z.object({
 export type MilkyTool = z.infer<typeof milkyToolSchema>;
 const toolList = z.object({ tools: z.array(milkyToolSchema), nextCursor: z.string().optional() });
 const milkyResponse = z.object({ status: z.string(), retcode: z.number(), message: z.string().nullable().optional(), data: jsonSchema.optional() });
+export const messageSendTools = new Set(['send_group_message', 'send_private_message', 'send_temp_message']);
+export const markdownUnsupported = '当前 Lagrange 接入不支持 Markdown 消息发送，包括合并转发中的 Markdown 片段。请使用 text 片段发送普通文字。';
+
+export function assertSupportedMessage(name: string, args: Record<string, unknown>): void {
+  if (!messageSendTools.has(name)) return;
+  const inspect = (segments: unknown): void => {
+    if (!Array.isArray(segments)) return;
+    for (const segment of segments) {
+      if (!segment || typeof segment !== 'object') continue;
+      if (segment.type === 'markdown') throw new CapabilityError(markdownUnsupported);
+      if (segment.type === 'forward' && Array.isArray(segment.data?.messages)) for (const node of segment.data.messages) inspect(node?.segments);
+    }
+  };
+  inspect(args.message);
+}
 
 export class MilkyBusinessError extends Error {
   constructor(readonly response: Json) { super(`Milky 操作失败：${JSON.stringify(response)}`); }
@@ -91,6 +106,7 @@ export class MilkyClient {
     return responseData(await this.rawCall(name, args, signal));
   }
   async execute(name: string, args: Record<string, unknown>, roleId: string | null, signal?: AbortSignal) {
+    assertSupportedMessage(name, args);
     const tool = this.tools.find(tool => tool.name === name);
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;

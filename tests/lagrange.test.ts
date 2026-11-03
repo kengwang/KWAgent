@@ -35,6 +35,20 @@ test('真实事件接收 Module 去重、保留作者并避免自身消息触发
   } finally { store.close(); }
 });
 
+test('Markdown 在远程调用和操作记录之前拒绝，包括嵌套转发', async () => {
+  const store = new Store(join(process.cwd(), '.artifacts/tests', `${randomUUID()}.sqlite`));
+  const client = new MilkyClient(loadConfig().milky, store);
+  const markdown = { type: 'markdown', data: { content: '# 标题' } };
+  try {
+    for (const name of ['send_group_message', 'send_private_message', 'send_temp_message']) {
+      await assert.rejects(client.execute(name, { message: [markdown] }, null), /不支持 Markdown/);
+      await assert.rejects(client.execute(name, { message: [{ type: 'forward', data: { messages: [{ segments: [{ type: 'forward', data: { messages: [{ segments: [markdown] }] } }] }] } }] }, null), /不支持 Markdown/);
+      await assert.rejects(client.execute(name, { message: [{ type: 'text', data: { text: '# 普通文字里的 Markdown 符号' } }] }, null), /工具不存在/);
+    }
+    assert.equal(store.operations().length, 0);
+  } finally { await client.close(); store.close(); }
+});
+
 test('媒体真实保存、签名授权、Range 与角色归属', async () => {
   const root = join(process.cwd(), '.artifacts/tests', randomUUID());
   const store = new Store(join(root, 'kwagent', 'state.sqlite'));

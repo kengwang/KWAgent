@@ -11,7 +11,7 @@ import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
 import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now } from '@kwagent/core';
 import type { Experience } from '@kwagent/core';
-import { MilkyClient, isAccountMutation } from './client.ts';
+import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTools, markdownUnsupported } from './client.ts';
 import { MilkyEvents } from './events.ts';
 import { MediaModule } from './media.ts';
 
@@ -70,8 +70,9 @@ export class Lagrange extends Service {
       const validateOutput = tool.outputSchema ? this.ajv.compile(tool.outputSchema) : undefined;
       const definition = createMcpToolDefinition(ctx, {
         name: mcpToolName(tool.name), rawName: tool.name,
-        description: tool.description ?? tool.name, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
+        description: `${tool.description ?? tool.name}${messageSendTools.has(tool.name) ? `\n${markdownUnsupported}` : ''}`, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
         call: async (args, exec) => {
+          assertSupportedMessage(tool.name, args);
           if (!validateInput(args)) throw new Error(`Milky 参数无效：${this.ajv.errorsText(validateInput.errors)}`);
           if (['send_private_message', 'send_temp_message', 'upload_private_file'].includes(tool.name) && typeof args.user_id === 'number') {
             const store = this.ctx.kwMind.store;
