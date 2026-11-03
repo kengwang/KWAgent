@@ -1,0 +1,12 @@
+node_modules/
+packages/*/lib/
+.artifacts/
+.env
+.env.*
+!.env.example
+data/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+*.log

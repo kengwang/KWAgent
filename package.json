@@ -1,0 +1,58 @@
+{
+  "name": "kwagent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "node scripts/test.mjs",
+    "ci": "node scripts/ci.mjs",
+    "start": "node scripts/start.mjs",
+    "admin": "node scripts/admin.mjs",
+    "verify:milky": "node scripts/verify-milky.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-compaction-basic": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-mcp-client": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-typert-generator": "0.2.2-alpha.2",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "eventsource-parser": "4.1.3",
+    "file-type": "22.3.0",
+    "js-yaml": "5.5.0",
+    "mammoth": "1.13.0",
+    "openai": "7.47.0",
+    "pdfjs-dist": "6.5.438",
+    "proper-lockfile": "4.1.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "semver": "7.8.6",
+    "sharp": "0.35.5",
+    "sqlite-vec": "0.1.9",
+    "xlsx": "0.18.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/js-yaml": "4.0.9",
+    "@types/node": "24",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/semver": "7.8.0",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  },
+  "trustedDependencies": [
+    "@deepseek-ai/dsh-subprocess-local",
+    "koffi",
+    "protobufjs"
+  ]
+}

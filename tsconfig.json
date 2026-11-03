@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["node", "react"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "declaration": true,
+    "rootDir": ".",
+    "outDir": ".artifacts/tsc",
+    "baseUrl": ".",
+    "paths": {
+      "@kwagent/core": ["packages/core/src/index.ts"],
+      "@kwagent/kw-mind": ["packages/kw-mind/src/index.ts"],
+      "@kwagent/kw-life": ["packages/kw-life/src/index.ts"],
+      "@kwagent/kw-lagrange": ["packages/kw-lagrange/src/index.ts"],
+      "@kwagent/kw-panel": ["packages/kw-panel/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "tests/**/*.ts"],
+  "exclude": ["packages/*/lib", "node_modules"]
+}
