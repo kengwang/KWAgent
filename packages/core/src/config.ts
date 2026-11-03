@@ -9,7 +9,6 @@ export const configSchema = z.object({
   dataRoot: z.string(), publicUrl: optionalUrl, timeZone: z.string().default('Asia/Shanghai'),
   milky: z.object({ baseUrl: z.string().url(), token: z.string().optional(), timeoutMs: positive(60000), reconcileSeconds: positive(300) }),
   chat: z.object({ baseUrl: optionalUrl, apiKey: z.string().optional(), provider: z.string(), model: z.string().optional() }),
-  embedding: z.object({ baseUrl: optionalUrl, apiKey: z.string().optional(), model: z.string().optional() }),
   vision: z.object({ baseUrl: optionalUrl, apiKey: z.string().optional(), model: z.string().optional() }),
   batchMs: positive(1000), memoryTokens: positive(8192),
   backup: z.object({ enabled: z.boolean(), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), keepDays: positive(14) }),
@@ -24,14 +23,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     timeZone: env.KW_TIME_ZONE,
     milky: { baseUrl: env.LAGRANGE_BASE_URL ?? 'https://agent-kw-milky.d1no.cn/', token: emptyToUndefined(env.LAGRANGE_ACCESS_TOKEN), timeoutMs: env.LAGRANGE_TOOL_TIMEOUT_MS, reconcileSeconds: env.LAGRANGE_RECONCILE_INTERVAL_SECONDS },
     chat: { baseUrl: emptyToUndefined(env.KW_CHAT_BASE_URL), apiKey: emptyToUndefined(env.KW_CHAT_API_KEY), provider: env.KW_LLM_PROVIDER ?? 'deepseek-official', model: emptyToUndefined(env.KW_LLM_MODEL) },
-    embedding: { baseUrl: emptyToUndefined(env.KW_EMBEDDING_BASE_URL), apiKey: emptyToUndefined(env.KW_EMBEDDING_API_KEY), model: emptyToUndefined(env.KW_EMBEDDING_MODEL) },
-    vision: { baseUrl: emptyToUndefined(env.KW_VISION_BASE_URL), apiKey: emptyToUndefined(env.KW_VISION_API_KEY), model: emptyToUndefined(env.KW_VISION_MODEL) },
+    vision: { baseUrl: emptyToUndefined(env.KW_VISION_BASE_URL) ?? emptyToUndefined(env.KW_CHAT_BASE_URL), apiKey: emptyToUndefined(env.KW_VISION_API_KEY) ?? emptyToUndefined(env.KW_CHAT_API_KEY), model: emptyToUndefined(env.KW_VISION_MODEL) ?? emptyToUndefined(env.KW_LLM_MODEL) },
     batchMs: env.KW_EVENT_BATCH_WINDOW_MS, memoryTokens: env.KW_CONTEXT_MEMORY_TOKENS,
     backup: { enabled: env.KW_BACKUP_ENABLED !== 'false', time: env.KW_BACKUP_TIME ?? '03:00', keepDays: env.KW_BACKUP_KEEP_DAYS },
     mediaMaxBytes: env.KW_MEDIA_MAX_BYTES, mediaLifetimeSeconds: env.KW_MEDIA_LIFETIME_SECONDS,
   });
   new Intl.DateTimeFormat('en', { timeZone: config.timeZone }).format();
-  for (const key of ['embedding', 'vision'] as const) {
+  for (const key of ['vision'] as const) {
     const provider = config[key];
     if ((provider.baseUrl || provider.model) && !(provider.baseUrl && provider.model)) throw new Error(`${key} 必须同时配置 BASE_URL 和 MODEL`);
   }
@@ -39,18 +37,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 }
 
 export function publicConfig(config: AppConfig) {
-  const provider = (value: AppConfig['embedding']) => ({ baseUrl: value.baseUrl ?? null, model: value.model ?? null, credentialConfigured: Boolean(value.apiKey) });
+  const provider = (value: AppConfig['vision']) => ({ baseUrl: value.baseUrl ?? null, model: value.model ?? null, credentialConfigured: Boolean(value.apiKey) });
   return {
     timeZone: config.timeZone, publicUrl: config.publicUrl ?? null,
     milky: { baseUrl: config.milky.baseUrl, credentialConfigured: Boolean(config.milky.token) },
     chat: { ...provider(config.chat), provider: config.chat.provider },
-    embedding: provider(config.embedding), vision: provider(config.vision),
+    vision: provider(config.vision),
     batchMs: config.batchMs, memoryTokens: config.memoryTokens, backup: config.backup,
   };
 }
 
 export function redact(text: string, config: AppConfig): string {
-  for (const secret of [config.milky.token, config.chat.apiKey, config.embedding.apiKey, config.vision.apiKey, process.env.DEEPSEEK_API_KEY]) {
+  for (const secret of [config.milky.token, config.chat.apiKey, config.vision.apiKey, process.env.DEEPSEEK_API_KEY]) {
     if (secret) text = text.replaceAll(secret, '[REDACTED]');
   }
   return text.replace(/(Bearer\s+)[^\s"']+/gi, '$1[REDACTED]');

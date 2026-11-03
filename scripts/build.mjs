@@ -10,18 +10,14 @@ const run = args => {
   if (result.status !== 0) throw new Error(`构建失败：${args.join(' ')}`);
 };
 
-if (existsSync(join(root, 'packages/kw-panel/src/index.ts'))) {
-  const { WorkspaceTypertGenerator, writeWorkspaceArtifacts } = await import('@deepseek-ai/dsh-typert-generator');
-  const generator = new WorkspaceTypertGenerator(root);
-  writeWorkspaceArtifacts(root, generator.generateContributors(['host']));
-}
-run(['node_modules/typescript/bin/tsc', '-p', 'tsconfig.host.json']);
+run(['node_modules/typescript/bin/tsc', '-p', 'tsconfig.build.json']);
 for (const name of readdirSync(join(root, 'packages'))) {
   const sourceRoot = join(root, '.artifacts/tsc/packages', name, 'src');
   if (!existsSync(join(sourceRoot, 'index.js'))) continue;
   const destination = join(root, 'packages', name, 'lib');
   mkdirSync(join(destination, 'types'), { recursive: true });
-  await build({ entryPoints: [join(sourceRoot, 'index.js'), ...(existsSync(join(sourceRoot, 'compaction.js')) ? [join(sourceRoot, 'compaction.js')] : [])], outdir: destination, bundle: true, packages: 'external', platform: 'node', target: 'node24', format: 'esm', sourcemap: true });
+  const entries = ['index', 'compaction', 'remote', 'typert'].map(name => join(sourceRoot, `${name}.js`)).filter(existsSync);
+  await build({ entryPoints: entries, outdir: destination, bundle: true, packages: 'external', platform: 'node', target: 'node24', format: 'esm', sourcemap: true });
   for (const file of readdirSync(sourceRoot, { recursive: true })) {
     if (typeof file === 'string' && file.endsWith('.d.ts')) {
       const target = join(destination, 'types', file);
@@ -36,7 +32,8 @@ if (existsSync(join(root, 'packages/kw-panel/src/client/index.tsx'))) {
   await build({
     entryPoints: [join(root, 'packages/kw-panel/src/client/index.tsx')], outfile: join(root, 'packages/kw-panel/lib/client.js'),
     bundle: true, platform: 'browser', target: 'es2022', format: 'cjs', jsx: 'automatic',
-    external: ['react', 'react/jsx-runtime', 'react-dom', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-dockkit'],
+    external: ['react', 'react/jsx-runtime', 'react-dom', 'zod', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-dockkit'],
+    loader: { '.css': 'text' },
     banner: { js: `window.__ModuleLoader__.load({id:${JSON.stringify(id)},factory(require){const module={exports:{}};const exports=module.exports;` },
     footer: { js: 'return module.exports;}});' },
   });

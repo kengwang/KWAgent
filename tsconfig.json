@@ -20,7 +20,8 @@
       "@kwagent/kw-mind": ["packages/kw-mind/src/index.ts"],
       "@kwagent/kw-life": ["packages/kw-life/src/index.ts"],
       "@kwagent/kw-lagrange": ["packages/kw-lagrange/src/index.ts"],
-      "@kwagent/kw-panel": ["packages/kw-panel/src/index.ts"]
+      "@kwagent/kw-panel": ["packages/kw-panel/src/index.ts"],
+      "@kwagent/kw-panel/remote": ["packages/kw-panel/src/remote.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "tests/**/*.ts"],

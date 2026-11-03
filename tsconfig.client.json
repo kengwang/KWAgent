@@ -1,5 +1,4 @@
 {
-  "extends": "./tsconfig.json",
-  "include": ["packages/kw-panel/src/client/**/*.ts", "packages/kw-panel/src/client/**/*.tsx"],
-  "exclude": ["node_modules"]
+  "files": [],
+  "references": [{ "path": "./packages/kw-panel/tsconfig.client.json" }]
 }

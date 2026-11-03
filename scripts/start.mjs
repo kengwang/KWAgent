@@ -1,0 +1,61 @@
+import { loadEnvFile } from 'node:process';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile, symlink, readlink, realpath } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { networkInterfaces } from 'node:os';
+import { spawn } from 'node:child_process';
+import { initProfile } from '@deepseek-ai/dsh-app-boot';
+import { lockSync } from 'proper-lockfile';
+
+if (process.versions.bun) throw new Error('KWAgent 运行需要 Node.js');
+const root = resolve(import.meta.dirname, '..');
+if (existsSync(join(root, '.env'))) loadEnvFile(join(root, '.env'));
+const data = resolve(process.env.KW_DATA_ROOT ?? join(root, 'data'));
+process.env.KW_DATA_ROOT = data;
+process.env.DSH_HOME ??= join(data, 'dsh');
+process.env.TMPDIR = join(data, 'tmp');
+process.env.TMP = process.env.TMPDIR;
+process.env.TEMP = process.env.TMPDIR;
+process.env.DSH_TELEMETRY_MODE = 'DISABLED';
+process.env.DSH_TELEMETRY_DISABLED = 'true';
+process.env.DSH_PERMISSION_MODE ??= 'danger-full-access';
+process.env.NODE_USE_ENV_PROXY ??= '1';
+for (const name of ['dsh', 'kwagent', 'tmp', 'run', 'cache', 'backups', 'media', 'extensions', 'workspaces']) await mkdir(join(data, name), { recursive: true, mode: 0o700 });
+const releaseInstance = lockSync(join(data, 'run'), { realpath: true, stale: 30000, update: 5000, retries: 0 });
+process.once('exit', () => releaseInstance());
+const profile = join(process.env.DSH_HOME, 'profiles', 'kwagent');
+initProfile(profile, ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@kwagent/kw-bundle']);
+const manifestPath = join(profile, 'package.json');
+const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+manifest.dependencies ??= {};
+for (const name of ['core', 'kw-mind', 'kw-lagrange', 'kw-life', 'kw-panel', 'kw-bundle']) {
+  const packageName = `@kwagent/${name}`;
+  const source = join(root, 'packages', name);
+  const link = join(profile, 'node_modules', packageName);
+  await mkdir(dirname(link), { recursive: true });
+  if (!existsSync(link)) await symlink(source, link, process.platform === 'win32' ? 'junction' : 'dir');
+  else if (await realpath(link) !== await realpath(source)) throw new Error(`受管理包指向其他位置：${packageName}`);
+  manifest.dependencies[packageName] = `link:${source.replaceAll('\\', '/')}`;
+}
+manifest.dsh ??= {}; manifest.dsh.profile ??= {}; manifest.dsh.profile.bundles ??= [];
+if (!manifest.dsh.profile.bundles.includes('@kwagent/kw-bundle')) manifest.dsh.profile.bundles.push('@kwagent/kw-bundle');
+await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+const own = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+const installed = JSON.parse(await readFile(join(root, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8'));
+if (installed.version !== '0.2.2-alpha.2') throw new Error(`Harness 版本不匹配：${installed.version}`);
+let host = process.env.KW_BIND_IP;
+if (!host) host = process.env.KW_CONTAINER === 'true' ? Object.values(networkInterfaces()).flat().find(address => address?.family === 'IPv4' && !address.internal)?.address : '127.0.0.1';
+if (!host) throw new Error('没有找到具体的容器 IPv4 地址');
+const port = process.env.KW_CONTAINER === 'true' ? '3080' : process.env.KW_HOST_PORT ?? '3080';
+const args = [join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '--profile', 'kwagent', '--host', host, '--port', port, '--no-open'];
+if (process.env.KW_PUBLIC_URL) {
+  const url = new URL(process.env.KW_PUBLIC_URL);
+  if (process.env.KW_CONTAINER === 'true' && url.protocol !== 'https:') throw new Error('服务器部署需要 HTTPS 的 KW_PUBLIC_URL');
+  if (url.pathname !== '/' || url.search || url.hash) throw new Error('KW_PUBLIC_URL 需要是应用根地址');
+  args.push('--public-url', url.href, '--trusted-host', url.host);
+}
+const child = spawn(process.execPath, args, { cwd: join(data, 'workspaces'), env: process.env, stdio: 'inherit' });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+process.on('SIGINT', () => child.kill('SIGINT'));
+child.on('error', error => { throw error; });
+child.on('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });

@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "composite": true, "rootDir": "../..", "outDir": "../../.artifacts/tsc" },
+  "include": ["../*/src/**/*.ts"],
+  "exclude": ["../*/src/client/**", "../*/lib", "../../node_modules"]
+}

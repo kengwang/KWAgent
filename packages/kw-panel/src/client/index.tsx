@@ -1,0 +1,143 @@
+import type { Context } from '@deepseek-ai/cordis';
+import type {} from '@deepseek-ai/dsh-api-gateway/client';
+import type {} from '@deepseek-ai/dsh-client-connection/client';
+import type {} from '@deepseek-ai/dsh-client-ui-slots';
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client';
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
+import type {} from '@deepseek-ai/dsh-client-locale/client';
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
+import { useEffect, useState } from 'react';
+import type { Role, Memory, LifePlan, Experience, Operation, Json, Extension } from '@kwagent/core';
+import contribution from '@kwagent/kw-panel/remote';
+import styles from './style.css?inline';
+import { RoleForm, PlanForm } from './forms.tsx';
+
+interface Snapshot {
+  revision: number; maintenance: boolean; started: boolean; startupError: string | null;
+  roles: (Role & { runtime: { state: string; error: string | null }; usage: { requests: number; tokens: number } })[];
+  events: Experience[]; memories: Memory[]; plans: LifePlan[]; operations: Operation[]; extensions: Extension[];
+  connections: Record<string, { state: string; error: string | null }>; config: { vision: { model: string | null }; chat: { model: string | null; provider: string } };
+}
+type Call = (action: string, payload?: unknown) => Promise<unknown>;
+const tabs = ['活动', '角色', '记忆', '人物', '世界', '目标与安排', '能力', '运维'] as const;
+const stateLabels: Record<string, string> = { active: '已启用', disabled: '未启用', paused: '已暂停', stopped: '已停止', running: '正在活动', waiting: '等待中', error: '需要处理', quota: '已达到额度', maintenance: '维护中', 'outside-active-hours': '活动时段外' };
+
+function Panel({ ctx }: { ctx: Context }) {
+  const [snapshot, setSnapshot] = useState<Snapshot>();
+  const [roleId, setRoleId] = useState('');
+  const [tab, setTab] = useState<typeof tabs[number]>('活动');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState('');
+  const [scene, setScene] = useState('');
+  const [peer, setPeer] = useState('');
+  const [found, setFound] = useState<Memory[] | null>(null);
+  const [olderEvents, setOlderEvents] = useState<Experience[]>([]);
+  const [olderMemories, setOlderMemories] = useState<Memory[]>([]);
+  const [detail, setDetail] = useState<unknown>(null);
+  const [editing, setEditing] = useState<Role | 'new' | null>(null);
+  const [editingPlan, setEditingPlan] = useState<LifePlan | undefined>();
+  const [connectionRevision, setConnectionRevision] = useState(0);
+  useEffect(() => { const release = ctx.on('connection/reset', () => setConnectionRevision(value => value + 1)); return () => { release(); }; }, [ctx]);
+  const call: Call = async (action, payload = null) => {
+    setError(''); setBusy(true);
+    try {
+      const result = await ctx.remote.kwAgent.mutate(action, JSON.stringify(payload));
+      if (!result.ok) throw new Error(result.error.message);
+      const value = JSON.parse(result.value);
+      if (action === 'memory.revise') setFound(previous => previous?.map(memory => memory.id === value.id ? value as Memory : memory) ?? null);
+      return value;
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); throw error; }
+    finally { setBusy(false); }
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    const stream = ctx.remote.kwAgent.follow(roleId, controller.signal);
+    void (async () => {
+      try { for await (const frame of stream) setSnapshot(JSON.parse(frame.payload) as Snapshot); }
+      catch (error) { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error)); }
+    })();
+    return () => { controller.abort(); stream.dispose(); };
+  }, [roleId, connectionRevision]);
+  const role = snapshot?.roles.find(role => role.id === roleId);
+  const currentEdit = editing && editing !== 'new' ? snapshot?.roles.find(role => role.id === editing.id) : undefined;
+  const currentPlan = snapshot?.plans.find(plan => plan.id === editingPlan?.id);
+  useEffect(() => { setOlderEvents([]); setOlderMemories([]); setEditingPlan(undefined); setEditing(null); }, [roleId]);
+  const act = (action: string, payload?: unknown) => { void call(action, payload).catch(() => {}); };
+  const events = [...new Map([...(snapshot?.events ?? []), ...olderEvents].map(event => [event.id, event])).values()];
+  const allMemories = [...new Map([...olderMemories, ...(snapshot?.memories ?? [])].map(memory => [memory.id, memory])).values()];
+  const memories = (found ?? allMemories).filter(memory => tab === '人物' ? ['person', 'relationship'].includes(memory.kind) : tab === '世界' ? memory.kind === 'world' : true);
+  return <div className="kw-panel">
+    <aside className="kw-roles">
+      <header><h1>KWAgent</h1><Button size="sm" onClick={() => setEditing('new')}>创建角色</Button></header>
+      <button className={!roleId ? 'kw-role selected' : 'kw-role'} onClick={() => setRoleId('')}>全部活动</button>
+      {snapshot?.roles.map(item => <button key={item.id} className={roleId === item.id ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(item.id); setFound(null); setDetail(null); }}>
+        <strong>{item.name}</strong><span>{stateLabels[item.runtime.state] ?? item.runtime.state}</span>
+      </button>)}
+      <footer>{snapshot ? `修订 ${snapshot.revision}` : '正在连接 Host'}<br />{snapshot?.maintenance ? '服务器维护中' : '角色自主安排活动'}</footer>
+    </aside>
+    <main className="kw-main">
+      <header className="kw-header"><div><h2>{role?.name ?? '全部活动'}</h2><p>{role ? `${role.worldMode === 'real' ? '现实生活' : role.worldMode === 'fictional' ? '共同虚构世界' : '现实与虚构并存'} · 今日 ${role.usage.requests} 次请求，${role.usage.tokens} Token` : '查看角色的经历、认识和自主安排'}</p></div>
+        {role && <div className="kw-actions"><Button disabled={busy} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button></div>}
+      </header>
+      <nav aria-label="角色管理">{tabs.map(name => <button key={name} aria-current={tab === name ? 'page' : undefined} onClick={() => { setTab(name); setFound(null); }}>{name}</button>)}</nav>
+      {(error || snapshot?.startupError || role?.runtime.error) && <div role="alert" className="kw-error">{error || role?.runtime.error || snapshot?.startupError}</div>}
+      {editing && editing !== 'new' && currentEdit && editing.revision !== currentEdit.revision && <div role="alert" className="kw-error"><p>角色已经更新，输入内容已保留。当前人格：</p><p className="kw-prose">{currentEdit.persona}</p><Button onClick={() => setEditing(currentEdit)}>读取当前版本</Button></div>}
+      {tab === '目标与安排' && editingPlan && currentPlan && editingPlan.revision !== currentPlan.revision && <div role="alert" className="kw-error"><p>事项已经更新，输入内容已保留。当前内容：{currentPlan.instruction}</p><Button onClick={() => setEditingPlan(currentPlan)}>读取当前事项版本</Button></div>}
+      {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} busy={busy} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
+        {tab === '活动' && <><EventInput roleId={roleId} call={call} />{events.length ? events.map(event => <article className="kw-entry" key={event.id}><div className="kw-entry-head"><strong>{event.type}</strong><time>{new Date(event.occurredAt).toLocaleString()}</time></div><p>{JSON.stringify(event.payload).slice(0, 280)}</p><Button size="sm" onClick={() => setDetail(event)}>阅读经历</Button></article>) : <Empty text="收到的消息、工具观察与自主活动会出现在这里。" />}{events.length >= 100 && <Button disabled={busy} onClick={() => { void call('events', { roleId: roleId || undefined, before: Math.min(...events.map(event => event.seq)) }).then(value => setOlderEvents(previous => [...previous, ...value as Experience[]])).catch(() => {}); }}>读取更早经历</Button>}</>}
+        {tab === '角色' && (role ? <><div className="kw-section-head"><h3>当前人格</h3><Button onClick={() => setEditing(role)}>编辑角色</Button></div><p className="kw-prose">{role.persona}</p><h3>自我状态</h3><p>{role.selfState || '尚未形成当前状态。'}</p><h3>会话归属</h3><p>群聊：{role.globalGroups ? '账号全局共享' : role.groups.join('、') || '尚未绑定'}；私聊：{role.defaultPrivate ? '账号默认角色' : role.contacts.join('、') || '按联系人绑定'}</p><Button onClick={async () => setDetail(await call('history', { entity: 'role', id: role.id }))}>查看人格修订</Button></> : <Empty text="选择或创建一个角色来编辑人格与会话归属。" />)}
+        {['记忆', '人物', '世界'].includes(tab) && <><form className="kw-search" onSubmit={event => { event.preventDefault(); if (roleId) void call('memory.recall', { roleId, query, semantic: Boolean(query), ...(scene ? { scene } : {}), ...(peer ? { peerId: Number(peer) } : {}) }).then(result => setFound(result as Memory[])).catch(() => {}); }}><label>检索记忆<input value={query} onChange={event => setQuery(event.target.value)} placeholder="人物、共同经历或正在关注的问题" /></label><label>会话类型<select value={scene} onChange={event => setScene(event.target.value)}><option value="">全部会话</option><option value="group">群聊</option><option value="private">私聊</option></select></label><label>会话对象<input type="number" min="1" value={peer} onChange={event => setPeer(event.target.value)} placeholder="群号或联系人号" /></label><Button type="submit" disabled={!roleId || busy}>检索</Button></form>{memories.length ? memories.map(memory => <MemoryEditor key={memory.id} memory={memory} call={call} onDetail={setDetail} />) : <Empty text={roleId ? '相关认识形成后会出现在这里。' : '选择角色后可以查阅和检索记忆。'} />}{roleId && !found && allMemories.length >= 100 && <Button disabled={busy} onClick={() => { void call('memory.list', { roleId, offset: allMemories.length }).then(value => setOlderMemories(previous => [...previous, ...value as Memory[]])).catch(() => {}); }}>读取更多认识</Button>}</>}
+        {tab === '目标与安排' && <><PlanForm key={editingPlan ? `${editingPlan.id}:${editingPlan.revision}` : roleId} roleId={roleId} call={call} initial={editingPlan} onDone={() => setEditingPlan(undefined)} />{snapshot.plans.map(plan => <article className="kw-entry" key={plan.id}><h3>{plan.title}</h3><p>{plan.instruction}</p><p>{{ goal: '持续目标', condition: '条件事项', time: '时间安排' }[plan.kind]} · {{ pending: '待安排', active: '进行中', paused: '已暂停', completed: plan.kind === 'time' ? '已投递' : '已完成', cancelled: '已取消', error: '需要处理' }[plan.status]}</p><div className="kw-actions"><Button size="sm" onClick={() => setEditingPlan(plan)}>修改</Button><Button size="sm" onClick={() => setDetail(plan)}>详情</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'complete', id: plan.id, expectedRevision: plan.revision } })}>完成</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'cancel', id: plan.id, expectedRevision: plan.revision } })}>取消</Button></div></article>)}</>}
+        {tab === '能力' && <><h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>视觉：{snapshot.config.vision.model ?? '尚未配置'}</p><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p><h3>自主扩展</h3><ExtensionForm roleId={roleId} call={call} />{snapshot.extensions.map(extension => <article className="kw-entry" key={extension.id}><h3>{extension.packageName}</h3><p>{extension.state}</p><Button onClick={() => act('extension', { roleId: extension.roleId, request: { action: extension.enabled ? 'disable' : 'enable', id: extension.id } })}>{extension.enabled ? '停用' : '启用'}</Button></article>)}<h3>工具记录</h3>{snapshot.operations.map(operation => <details key={operation.id}><summary>{operation.tool} · {operation.state}</summary><pre>{JSON.stringify(operation, null, 2)}</pre></details>)}</>}
+        {tab === '运维' && <><h3>服务器操作</h3><div className="kw-actions"><Button onClick={async () => setDetail(await call('doctor'))}>检查运行环境</Button><Button onClick={() => act(snapshot.maintenance ? 'resume' : 'quiesce')}>{snapshot.maintenance ? '恢复活动' : '进入维护'}</Button><Button disabled={busy} onClick={async () => setDetail(await call('backup'))}>创建备份</Button><Button disabled={busy} onClick={async () => setDetail(await call('reindex'))}>重建记忆索引</Button></div><p>应用版本 0.1.0 · Harness 0.2.2-alpha.2</p></>}
+      </section>}
+    </main>
+    {detail !== null && <aside className="kw-detail"><div className="kw-section-head"><h3>内容与来源</h3><Button size="sm" onClick={() => setDetail(null)}>关闭</Button></div><pre>{JSON.stringify(detail, null, 2)}</pre>{typeof detail === 'object' && detail && 'seq' in detail && 'id' in detail && <TransferEvent eventId={String(detail.id)} roles={snapshot?.roles ?? []} call={call} />}</aside>}
+  </div>;
+}
+
+function Empty({ text }: { text: string }) { return <p className="kw-empty">{text}</p>; }
+function TransferEvent({ eventId, roles, call }: { eventId: string; roles: Role[]; call: Call }) {
+  const [target, setTarget] = useState('');
+  return <form className="kw-form" onSubmit={event => { event.preventDefault(); void call('events.transfer', { ids: [eventId], targetRoleId: target }).catch(() => {}); }}><label>迁移经历到角色<select required value={target} onChange={event => setTarget(event.target.value)}><option value="">选择目标角色</option>{roles.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label><Button type="submit" disabled={!target}>迁移经历</Button></form>;
+}
+function EventInput({ roleId, call }: { roleId: string; call: Call }) {
+  const [text, setText] = useState('');
+  return <form className="kw-search" onSubmit={event => { event.preventDefault(); void call('event', { roleId, text }).then(() => setText('')).catch(() => {}); }}><label>提供一段经历<textarea disabled={!roleId} value={text} onChange={event => setText(event.target.value)} placeholder={roleId ? '描述一件事情，让角色自行决定如何回应。' : '选择角色后提供经历'} /></label><Button type="submit" disabled={!roleId || !text}>提交事件</Button></form>;
+}
+function MemoryEditor({ memory, call, onDetail }: { memory: Memory; call: Call; onDetail(value: unknown): void }) {
+  const [editing, setEditing] = useState<Memory | null>(null); const [content, setContent] = useState(memory.content);
+  return <article className="kw-entry">
+    <h3>{memory.title}</h3><p className="kw-muted">{memory.kind} · {memory.epistemic} · 修订 {memory.revision}</p>
+    {editing ? <><label>记忆正文<textarea rows={8} value={content} onChange={event => setContent(event.target.value)} /></label>{editing.revision !== memory.revision && <div role="alert"><p>这条认识已更新，输入内容已保留。当前版本：</p><p className="kw-prose">{memory.content}</p><Button size="sm" onClick={() => setEditing(memory)}>使用当前修订号继续编辑</Button></div>}</> : <p className="kw-prose">{memory.content}</p>}
+    <div className="kw-actions">
+      <Button size="sm" onClick={() => { setEditing(editing ? null : memory); setContent(memory.content); }}>{editing ? '取消编辑' : '编辑认识'}</Button>
+      {editing && <Button size="sm" onClick={() => { void call('memory.revise', { memory: { ...editing, content }, expectedRevision: editing.revision, reason: '人工修订认识' }).then(() => setEditing(null)).catch(() => {}); }}>保存</Button>}
+      <Button size="sm" onClick={() => { void call('history', { entity: 'memory', id: memory.id }).then(onDetail).catch(() => {}); }}>来源与版本</Button>
+    </div>
+    <details><summary>原始依据</summary>{memory.sources.map(source => <Button key={source} size="sm" onClick={() => { void call('source.read', { roleId: memory.roleId, id: source }).then(onDetail).catch(() => {}); }}>{source}</Button>)}</details>
+  </article>;
+}
+function ExtensionForm({ roleId, call }: { roleId: string; call: Call }) {
+  const [id, setId] = useState(''); const [spec, setSpec] = useState('');
+  return <form className="kw-search" onSubmit={event => { event.preventDefault(); void call('extension', { roleId, request: { action: 'install', id, spec } }).catch(() => {}); }}><label>扩展标识<input required value={id} onChange={event => setId(event.target.value)} /></label><label>包名或角色工程路径<input required value={spec} onChange={event => setSpec(event.target.value)} /></label><Button type="submit" disabled={!roleId}>安装扩展</Button></form>;
+}
+
+export const inject = ['slots', 'layout', 'locale', 'remote'];
+export async function apply(ctx: Context): Promise<void> {
+  const unmount = await ctx.remote.$mount(contribution);
+  ctx.effect(() => unmount, 'kw-panel.remote');
+  const style = document.createElement('style'); style.textContent = styles;
+  ctx.effect(() => { document.head.append(style); return () => style.remove(); }, 'kw-panel.styles');
+  await ctx.plugin({
+    name: 'kw-panel-ui', inject: ['slots', 'layout', 'locale', 'remote', 'remote.kwAgent'],
+    apply(inner: Context) {
+      const panelId = 'kwagent' as MainPanelId;
+      inner.slots.inject('main', () => inner.slots.register({ name: 'main', key: panelId, inject: () => ({ ctx: inner }) }, Panel));
+      inner.slots.inject('sidebar.panellist', () => inner.slots.register({ name: 'sidebar.panellist', id: panelId, order: 2, label: () => 'KWAgent' }, ({ size }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M5 5h14v10H9l-4 4V5Z" /><path d="M9 9h6M9 12h4" /></svg>));
+    },
+  });
+}

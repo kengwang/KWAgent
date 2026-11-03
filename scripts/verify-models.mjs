@@ -1,0 +1,10 @@
+import { loadEnvFile } from 'node:process';
+import OpenAI from 'openai';
+import sharp from 'sharp';
+loadEnvFile('.env');
+const client = new OpenAI({ baseURL: process.env.KW_CHAT_BASE_URL, apiKey: process.env.KW_CHAT_API_KEY, maxRetries: 0, timeout: 60000 });
+const response = await client.chat.completions.create({ model: process.env.KW_LLM_MODEL, messages: [{ role: 'user', content: '请回复：连接验证成功。' }], max_tokens: 128 });
+console.log(JSON.stringify({ chat: { model: response.model, content: response.choices[0]?.message.content, usage: response.usage } }));
+const image = await sharp({ create: { width: 480, height: 240, channels: 3, background: '#ffffff' } }).composite([{ input: { create: { width: 160, height: 160, channels: 3, background: '#d22121' } }, left: 30, top: 40 }, { input: { create: { width: 160, height: 160, channels: 3, background: '#2353ca' } }, left: 290, top: 40 }]).png().toBuffer();
+const vision = await client.chat.completions.create({ model: process.env.KW_LLM_MODEL, messages: [{ role: 'user', content: [{ type: 'text', text: '请说明图片左侧和右侧图形的颜色。' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${image.toString('base64')}` } }] }], max_tokens: 256 });
+console.log(JSON.stringify({ vision: { model: vision.model, content: vision.choices[0]?.message.content, usage: vision.usage } }));

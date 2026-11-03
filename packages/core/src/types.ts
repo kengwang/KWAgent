@@ -19,12 +19,12 @@ export const roleSchema = z.object({
   memoryTokens: z.number().int().min(256).max(131072).default(8192),
   dailyRequests: z.number().int().positive().nullable().default(null),
   dailyTokens: z.number().int().positive().nullable().default(null),
-  activeHours: z.object({ start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/) }).nullable().default(null),
+  activeHours: z.object({ start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/) }).nullable().default(null),
   createdAt: z.string(), updatedAt: z.string(),
 });
 export type Role = z.infer<typeof roleSchema>;
 export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true })
-  .extend({ persona: z.string().optional(), selfState: z.string().optional() });
+  .extend({ persona: z.string().optional(), selfState: z.string().optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
 export type RoleInput = z.infer<typeof roleInputSchema>;
 
 export const eventSchema = z.object({
@@ -48,12 +48,13 @@ export const memorySchema = z.object({
   createdAt: z.string(), updatedAt: z.string(),
 });
 export type Memory = z.infer<typeof memorySchema>;
-export const memoryInputSchema = memorySchema.omit({ id: true, revision: true, createdAt: true, updatedAt: true }).extend({ id: z.string().optional() });
+export const memoryInputSchema = memorySchema.omit({ id: true, revision: true, createdAt: true, updatedAt: true }).extend({ id: z.string().nullable().optional() });
 export type MemoryInput = z.infer<typeof memoryInputSchema>;
 export const recallSchema = z.object({
   roleId: z.string(), query: z.string().default(''), kind: memorySchema.shape.kind.optional(),
   realm: realmSchema.optional(), person: z.string().optional(), since: z.string().optional(),
   until: z.string().optional(), limit: z.number().int().min(1).max(100).default(20),
+  scene: z.enum(['group', 'private']).optional(), peerId: z.number().int().positive().optional(),
   semantic: z.boolean().default(true), archived: z.boolean().default(false),
 });
 export type Recall = z.infer<typeof recallSchema>;
@@ -96,4 +97,12 @@ export class CapabilityError extends Error {
 }
 export function now(): string { return new Date().toISOString(); }
 export function asJson(value: unknown): Json { return jsonSchema.parse(value); }
-export function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+export function errorText(error: unknown): string {
+  const messages: string[] = [];
+  const seen = new Set<unknown>();
+  while (error !== undefined && !seen.has(error)) {
+    seen.add(error); messages.push(error instanceof Error ? error.message : String(error));
+    error = error instanceof Error ? error.cause : undefined;
+  }
+  return messages.join('：');
+}

@@ -8,6 +8,6 @@ test('部署配置检查成对的模型字段和时区，公开状态脱敏', ()
   assert.equal(publicConfig(config).chat.credentialConfigured, true);
   assert.equal(JSON.stringify(publicConfig(config)).includes('local-secret'), false);
   assert.equal(redact('local-secret milky-secret Bearer other-secret', config), '[REDACTED] [REDACTED] Bearer [REDACTED]');
-  assert.throws(() => loadConfig({ KW_EMBEDDING_BASE_URL: 'https://example.com/v1' }), /同时配置/);
+  assert.throws(() => loadConfig({ KW_VISION_BASE_URL: 'https://example.com/v1' }), /同时配置/);
   assert.throws(() => loadConfig({ KW_TIME_ZONE: 'not-a-timezone' }));
 });

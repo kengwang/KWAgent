@@ -2,11 +2,11 @@
   "name": "@kwagent/kw-panel", "version": "0.1.0", "type": "module",
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "default": "./lib/client.js" },
-    "./typert": { "types": "./lib/typert.host.d.ts", "default": "./lib/typert.host.js" },
-    "./remote": { "types": "./lib/typert.remote-client.d.ts", "default": "./lib/typert.remote-client.js" }
+    "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },
+    "./typert": { "types": "./lib/types/typert.d.ts", "default": "./lib/typert.js" },
+    "./remote": { "types": "./lib/types/remote.d.ts", "default": "./lib/remote.js" }
   },
-  "files": ["lib", "lib/typert.host.js", "lib/typert.host.d.ts", "lib/typert.remote-client.js", "lib/typert.remote-client.d.ts"],
+  "files": ["lib"],
   "dsh": { "client": { "platform": "web" } },
   "engines": { "dsh": "0.2.2-alpha.2" },
   "dependencies": { "@kwagent/core": "workspace:*", "@kwagent/kw-life": "workspace:*" }

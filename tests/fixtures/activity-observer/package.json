@@ -1,0 +1,7 @@
+{
+  "name": "kwagent-verification-observer",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "engines": { "dsh": "0.2.2-alpha.2" }
+}

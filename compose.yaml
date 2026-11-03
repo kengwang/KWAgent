@@ -1,0 +1,42 @@
+services:
+  kwagent:
+    image: ${KW_IMAGE:-kwagent:0.1.0}
+    build:
+      context: .
+      args:
+        KW_COMMIT: ${KW_COMMIT:-unknown}
+        NODE_IMAGE: ${KW_NODE_IMAGE:-node:24.18.0-bookworm-slim}
+        HTTP_PROXY: ${KW_BUILD_PROXY:-}
+        HTTPS_PROXY: ${KW_BUILD_PROXY:-}
+    init: true
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      KW_DATA_ROOT: /data
+      DSH_HOME: /data/dsh
+      KW_CONTAINER: 'true'
+      KW_PUBLIC_URL: ${KW_PUBLIC_URL:?请配置 HTTPS 管理域名}
+      HTTP_PROXY: ${KW_RUNTIME_PROXY:-}
+      HTTPS_PROXY: ${KW_RUNTIME_PROXY:-}
+      TZ: ${KW_TIME_ZONE:-Asia/Shanghai}
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:${KW_HOST_PORT:-3080}:3080'
+    volumes:
+      - '${KW_DATA_ROOT:-./data}:/data'
+    cpus: ${KW_CPU_LIMIT:-2}
+    mem_limit: ${KW_MEMORY_LIMIT:-4g}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ['CMD', 'node', 'scripts/healthcheck.mjs']
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'

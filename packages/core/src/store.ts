@@ -1,9 +1,8 @@
 import { DatabaseSync, backup } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import * as sqliteVec from 'sqlite-vec';
 import { z } from 'zod';
 import {
   asJson, ConflictError, eventSchema, extensionSchema, memorySchema, now,
@@ -18,7 +17,7 @@ function decode<T>(row: Row | undefined, schema: z.ZodType<T>): T | undefined {
   return schema.parse(JSON.parse(z.string().parse(row.body)));
 }
 
-/** 同一数据库拥有原始经历、版本、记忆和向量，变更通知只在提交后发送。 */
+/** 同一数据库拥有原始经历、版本和记忆，变更通知只在提交后发送。 */
 export class Store {
   readonly db: DatabaseSync;
   readonly changes = new EventEmitter();
@@ -28,9 +27,7 @@ export class Store {
 
   constructor(readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path, { allowExtension: true });
-    sqliteVec.load(this.db);
-    this.db.enableLoadExtension(false);
+    this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000');
     const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
     if (version > SCHEMA_VERSION) throw new Error(`数据库版本 ${version} 超过当前支持的 ${SCHEMA_VERSION}`);
@@ -109,8 +106,8 @@ export class Store {
       this.touch();
     });
   }
-  history(entity: string, id: string, limit = 100): Revision[] {
-    return this.db.prepare('SELECT * FROM revisions WHERE entity=? AND id=? ORDER BY revision DESC LIMIT ?').all(entity, id, limit).map(row => ({
+  history(entity: string, id: string, limit = 100, before?: number): Revision[] {
+    return this.db.prepare('SELECT * FROM revisions WHERE entity=? AND id=? AND (? IS NULL OR revision<?) ORDER BY revision DESC LIMIT ?').all(entity, id, before ?? null, before ?? null, limit).map(row => ({
       entity, id, revision: Number(row.revision), actor: String(row.actor), reason: String(row.reason), value: asJson(JSON.parse(String(row.body))), time: String(row.time),
     }));
   }
@@ -175,15 +172,29 @@ export class Store {
     return this.db.prepare('SELECT * FROM events WHERE (? IS NULL OR role_id=?) AND (? IS NULL OR seq<?) ORDER BY seq DESC LIMIT ?')
       .all(roleId ?? null, roleId ?? null, before ?? null, before ?? null, limit).map(row => this.eventFromRow(row));
   }
+  peers(accountId: string, scene: string): number[] {
+    return this.db.prepare('SELECT DISTINCT peer_id FROM events WHERE account_id=? AND scene=? AND role_id IS NOT NULL AND peer_id IS NOT NULL').all(accountId, scene).map(row => Number(row.peer_id));
+  }
   event(id: string): Experience { const row = this.db.prepare('SELECT * FROM events WHERE id=?').get(id); if (!row) throw new Error(`经历不存在：${id}`); return this.eventFromRow(row); }
   pending(roleId: string, limit = 50): Experience[] {
     return this.db.prepare("SELECT e.* FROM events e LEFT JOIN event_delivery d ON d.event_id=e.id WHERE e.role_id=? AND e.self=0 AND (d.state IS NULL OR d.state='prepared') ORDER BY e.seq LIMIT ?").all(roleId, limit).map(row => this.eventFromRow(row));
+  }
+  pendingBatch(roleId: string): { events: Experience[]; messageId?: string } {
+    const pending = this.pending(roleId);
+    if (!pending.length) return { events: [] };
+    const delivery = (id: string) => this.db.prepare('SELECT message_id FROM event_delivery WHERE event_id=?').get(id)?.message_id;
+    const messageId = delivery(pending[0]!.id);
+    return { events: pending.filter(event => delivery(event.id) === messageId), ...(messageId ? { messageId: String(messageId) } : {}) };
   }
   delivery(ids: string[], messageId: string, state: 'prepared' | 'delivered' | 'completed'): void {
     this.transaction(() => { for (const id of ids) this.db.prepare('INSERT INTO event_delivery VALUES(?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET message_id=excluded.message_id,state=excluded.state,updated_at=excluded.updated_at').run(id, messageId, state, now()); this.touch(); });
   }
   hasDelivery(messageId: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM event_delivery WHERE message_id=? AND state!='prepared' LIMIT 1").get(messageId)); }
-  completeDelivered(roleId: string): void { this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered'").run(now(), roleId); this.touch(); }
+  completeDelivered(roleId: string, accepted: string[]): void { this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted)); this.touch(); }
+  recoverDeliveries(roleId: string, accepted: string[]): void {
+    this.db.prepare("UPDATE event_delivery SET state='prepared',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state!='prepared' AND message_id NOT LIKE 'filtered:%' AND message_id NOT IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted));
+    this.touch();
+  }
   unprocessed(roleId: string, limit = 100): Experience[] { return this.db.prepare('SELECT * FROM events WHERE role_id=? AND consolidated=0 ORDER BY seq LIMIT ?').all(roleId, limit).map(row => this.eventFromRow(row)); }
   markConsolidated(ids: string[]): void { this.transaction(() => { for (const id of ids) this.db.prepare('UPDATE events SET consolidated=1 WHERE id=?').run(id); this.touch(); }); }
   migrateEvents(ids: string[], targetRoleId: string): void {
@@ -191,7 +202,7 @@ export class Store {
     this.transaction(() => {
       for (const id of ids) {
         const event = this.event(id);
-        if (event.activityId || this.db.prepare('SELECT 1 FROM event_delivery WHERE event_id=?').get(id)) throw new Error('已经进入活动的经历需要保留原始归属；可以向目标角色提供引用');
+        if (event.activityId || this.db.prepare('SELECT 1 FROM event_delivery WHERE event_id=?').get(id) || this.db.prepare('SELECT 1 FROM memory_sources WHERE source_id=?').get(id)) throw new Error('已经进入活动或认识依据的经历需要保留原始归属；可以向目标角色提供引用');
         this.db.prepare('UPDATE events SET role_id=? WHERE id=?').run(targetRoleId, id);
         this.appendEvent({ accountId: event.accountId, roleId: targetRoleId, source: 'system', type: 'experience-transfer', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ eventId: id, from: event.roleId, to: targetRoleId }) });
       }
@@ -213,7 +224,7 @@ export class Store {
 
   memory(id: string): Memory { const memory = this.get('memory', id, memorySchema); if (!memory) throw new Error(`记忆不存在：${id}`); return memory; }
   memories(roleId: string, limit = 100, offset = 0): Memory[] { return this.list('memory', memorySchema, roleId, limit, offset); }
-  saveMemory(input: MemoryInput, expectedRevision: number | null, actor: string, reason: string, vector?: number[]): Memory {
+  saveMemory(input: MemoryInput, expectedRevision: number | null, actor: string, reason: string): Memory {
     return this.transaction(() => {
       this.role(input.roleId);
       const id = input.id ?? randomUUID();
@@ -233,7 +244,6 @@ export class Store {
       this.db.prepare('INSERT INTO memory_fts(rowid,title,content,aliases) VALUES(?,?,?,?)').run(rowid, memory.title, memory.content, [...memory.people, ...memory.aliases].join(' '));
       this.db.prepare('DELETE FROM memory_sources WHERE memory_id=?').run(id);
       for (const source of memory.sources) this.db.prepare('INSERT INTO memory_sources VALUES(?,?)').run(id, source);
-      if (vector) this.setVector(id, memory.roleId, vector);
       return memory;
     });
   }
@@ -245,6 +255,10 @@ export class Store {
     if (query.since) { conditions.push('d.updated_at>=?'); values.push(query.since); }
     if (query.until) { conditions.push('d.updated_at<=?'); values.push(query.until); }
     if (query.person) { conditions.push("EXISTS(SELECT 1 FROM json_each(d.body,'$.people') WHERE value=?)"); values.push(query.person); }
+    if (query.scene || query.peerId) {
+      conditions.push("EXISTS(SELECT 1 FROM memory_sources ms JOIN events e ON e.id=ms.source_id WHERE ms.memory_id=d.id AND (?='' OR e.scene=?) AND (?=0 OR e.peer_id=?))");
+      values.push(query.scene ?? '', query.scene ?? '', query.peerId ?? 0, query.peerId ?? 0);
+    }
     let join = '';
     let order = 'd.updated_at DESC';
     if (query.query.length >= 3) {
@@ -257,28 +271,17 @@ export class Store {
     return this.db.prepare(`SELECT d.body FROM documents d ${join} WHERE ${conditions.join(' AND ')} ORDER BY ${order} LIMIT ?`).all(...values, query.limit * 3)
       .map(row => memorySchema.parse(JSON.parse(String(row.body))));
   }
-  ensureVectorIndex(model: string, dimensions: number, activate = true): string {
-    if (!Number.isSafeInteger(dimensions) || dimensions < 1 || dimensions > 65536) throw new Error('Embedding 维度无效');
-    const name = `vec_${createHash('sha256').update(`${model}:${dimensions}`).digest('hex').slice(0, 16)}`;
-    this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${name} USING vec0(memory_id TEXT PRIMARY KEY,role_id TEXT PARTITION KEY,embedding FLOAT[${dimensions}])`);
-    if (activate) this.setMeta('vector-index', JSON.stringify({ name, model, dimensions }));
-    return name;
-  }
-  vectorIndex(): { name: string; model: string; dimensions: number } | undefined {
-    const value = this.meta('vector-index');
-    return value ? z.object({ name: z.string().regex(/^vec_[a-f0-9]{16}$/), model: z.string(), dimensions: z.number().int() }).parse(JSON.parse(value)) : undefined;
-  }
-  setVector(id: string, roleId: string, vector: number[], table = this.vectorIndex()?.name): void {
-    if (!table || !/^vec_[a-f0-9]{16}$/.test(table)) throw new Error('记忆向量索引尚未配置');
-    if (vector.some(value => !Number.isFinite(value))) throw new Error('Embedding 包含非有限数值');
-    this.db.prepare(`DELETE FROM ${table} WHERE memory_id=?`).run(id);
-    this.db.prepare(`INSERT INTO ${table}(memory_id,role_id,embedding) VALUES(?,?,?)`).run(id, roleId, new Float32Array(vector));
-  }
-  vectorSearch(roleId: string, vector: number[], limit: number): Memory[] {
-    const index = this.vectorIndex();
-    if (!index || index.dimensions !== vector.length) throw new Error('Embedding 索引维度不一致，请执行 reindex');
-    return this.db.prepare(`SELECT memory_id FROM ${index.name} WHERE embedding MATCH ? AND role_id=? AND k=? ORDER BY distance`).all(new Float32Array(vector), roleId, limit)
-      .map(row => this.memory(String(row.memory_id)));
+  rebuildSearch(): { count: number } {
+    return this.transaction(() => {
+      this.db.exec('DELETE FROM memory_fts');
+      const records = this.db.prepare("SELECT d.body,r.rowid FROM documents d JOIN memory_rows r ON r.id=d.id WHERE d.kind='memory'").all();
+      for (const row of records) {
+        const memory = memorySchema.parse(JSON.parse(String(row.body)));
+        this.db.prepare('INSERT INTO memory_fts(rowid,title,content,aliases) VALUES(?,?,?,?)').run(Number(row.rowid), memory.title, memory.content, [...memory.people, ...memory.aliases].join(' '));
+      }
+      this.touch();
+      return { count: records.length };
+    });
   }
   plans(roleId?: string): LifePlan[] { return this.list('plan', planSchema, roleId, 10000); }
   plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new Error('计划不存在'); return plan; }
@@ -298,7 +301,7 @@ export class Store {
   recoverOperations(): void { for (const op of this.operations(undefined, 100000)) if (op.state === 'started') this.finishOperation(op.id, 'unknown', { reason: '进程在取得结果前终止，需要核实远程状态' }); }
   media(id: string): Media { const media = this.get('media', id, mediaSchema); if (!media) throw new Error('媒体不存在'); return media; }
   extensions(roleId?: string): Extension[] { return this.list('extension', extensionSchema, roleId, 10000); }
-  addUsage(roleId: string, day: string, tokens: number): void { this.db.prepare('INSERT INTO usage VALUES(?,?,1,?) ON CONFLICT(role_id,day) DO UPDATE SET requests=requests+1,tokens=tokens+excluded.tokens').run(roleId, day, tokens); this.touch(); }
+  addUsage(roleId: string, day: string, tokens: number, requests = 1): void { this.db.prepare('INSERT INTO usage VALUES(?,?,?,?) ON CONFLICT(role_id,day) DO UPDATE SET requests=requests+excluded.requests,tokens=tokens+excluded.tokens').run(roleId, day, requests, tokens); this.touch(); }
   usage(roleId: string, day: string): { requests: number; tokens: number } { const row = this.db.prepare('SELECT requests,tokens FROM usage WHERE role_id=? AND day=?').get(roleId, day); return { requests: Number(row?.requests ?? 0), tokens: Number(row?.tokens ?? 0) }; }
   async backup(destination: string): Promise<void> { mkdirSync(dirname(destination), { recursive: true }); await backup(this.db, destination); }
   integrity(): string { return String(this.db.prepare('PRAGMA integrity_check').get()?.integrity_check); }

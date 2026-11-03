@@ -1,0 +1,23 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { loadEnvFile } from 'node:process';
+if (existsSync('.env')) loadEnvFile('.env');
+const git = (...args) => {
+  const result = spawnSync('git', args, { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return result.stdout.trim();
+};
+if (git('status', '--porcelain')) throw new Error('发布需要干净的 Git 工作目录');
+const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+const commit = git('rev-parse', 'HEAD');
+const tag = `v${version}`;
+const existing = spawnSync('git', ['rev-parse', '-q', '--verify', `refs/tags/${tag}^{}`], { encoding: 'utf8' });
+if (existing.status === 0 && existing.stdout.trim() !== commit) throw new Error('该发布标签已经指向其他提交');
+const ci = spawnSync(process.execPath, ['scripts/ci.mjs'], { stdio: 'inherit' });
+if (ci.status !== 0) process.exit(ci.status ?? 1);
+const image = spawnSync('docker', ['image', 'inspect', `kwagent:${version}`], { stdio: 'ignore' });
+if (image.status === 0) throw new Error('该版本镜像已经存在，请使用新版本');
+const build = spawnSync('docker', ['build', '--platform', 'linux/amd64', '--build-arg', `KW_COMMIT=${commit}`, '--build-arg', `NODE_IMAGE=${process.env.KW_NODE_IMAGE ?? 'node:24.18.0-bookworm-slim'}`, '--build-arg', `HTTP_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '--build-arg', `HTTPS_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '-t', `kwagent:${version}`, '-t', `kwagent:sha-${commit}`, '.'], { stdio: 'inherit' });
+if (build.status !== 0) process.exit(build.status ?? 1);
+if (existing.status !== 0) git('tag', '--no-sign', tag, commit);
+console.log(`已构建 kwagent:${version}，提交 ${commit}`);

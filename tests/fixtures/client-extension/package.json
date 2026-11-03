@@ -1,0 +1,9 @@
+{
+  "name": "kwagent-verification-client",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "exports": { ".": "./index.js", "./client": "./client.js" },
+  "engines": { "dsh": "0.2.2-alpha.2" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml", "platforms": ["linux", "win32"] }, "client": { "platform": "web" } }
+}

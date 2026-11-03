@@ -48,21 +48,34 @@ test('消息去重、历史核对位置与事务撤销', () => {
     assert.equal(store.meta('atomic'), undefined);
     store.delivery([event.event.id], 'message', 'delivered');
     assert.equal(store.pending('alice').length, 0);
+    const later = store.appendEvent({ ...input, messageSeq: 10 }).event;
+    store.delivery([later.id], 'prepared-message', 'prepared');
+    store.appendEvent({ ...input, messageSeq: 11 });
+    assert.deepEqual(store.pendingBatch('alice').events.map(event => event.id), [later.id]);
+    assert.equal(store.pendingBatch('alice').messageId, 'prepared-message');
+    store.delivery([later.id], 'prepared-message', 'delivered');
+    store.recoverDeliveries('alice', ['message']);
+    assert.equal(store.pendingBatch('alice').messageId, 'prepared-message');
+    store.completeDelivered('alice', ['message']);
+    assert.ok(store.pending('alice').some(event => event.id === later.id));
   } finally { store.close(); }
 });
 
-test('中文全文检索、真实 vec0 查询和来源版本在同一数据库提交', async () => {
+test('中文全文检索、来源版本和备份在真实数据库提交', async () => {
   const store = database();
   try {
     store.createRole(role('alice'));
     store.createRole(role('bob'));
-    store.ensureVectorIndex('mathematical-test-space', 3);
-    const a = store.saveMemory({ roleId: 'alice', kind: 'person', title: '共同兴趣', content: '我们喜欢观察植物和研究科学。', realm: 'real', epistemic: 'observed', people: ['456'], aliases: ['园艺'], sources: ['role:alice'], archived: false, attention: 0.7 }, null, 'owner', '记录兴趣', [1, 0, 0]);
-    store.saveMemory({ roleId: 'bob', kind: 'world', title: '另一个角色', content: '植物观察', realm: 'real', epistemic: 'reported', people: [], aliases: [], sources: ['role:bob'], archived: false, attention: 0.5 }, null, 'owner', '记录', [1, 0, 0]);
+    const a = store.saveMemory({ id: null, roleId: 'alice', kind: 'person', title: '共同兴趣', content: '我们喜欢观察植物和研究科学。', realm: 'real', epistemic: 'observed', people: ['456'], aliases: ['园艺'], sources: ['role:alice'], archived: false, attention: 0.7 }, null, 'owner', '记录兴趣');
+    store.saveMemory({ roleId: 'bob', kind: 'world', title: '另一个角色', content: '植物观察', realm: 'real', epistemic: 'reported', people: [], aliases: [], sources: ['role:bob'], archived: false, attention: 0.5 }, null, 'owner', '记录');
     assert.equal(store.lexical({ roleId: 'alice', query: '观察植物', limit: 20, semantic: false, archived: false })[0]?.id, a.id);
-    assert.deepEqual(store.vectorSearch('alice', [1, 0, 0], 5).map(value => value.id), [a.id]);
+    assert.equal(store.rebuildSearch().count, 2);
     assert.throws(() => store.saveMemory({ ...a, content: '没有来源的内容', sources: ['missing'] }, 1, 'alice', '修订'), /来源/);
     assert.equal(store.memory(a.id).revision, 1);
+    const source = store.appendEvent({ accountId: 'main', roleId: 'alice', source: 'milky', type: 'message_receive', occurredAt: now(), scene: 'group', peerId: 123, senderId: 456, messageSeq: 100, self: false, payload: { text: '一起观察向日葵。' } }).event;
+    const sourced = store.saveMemory({ ...a, id: null, title: '群内观察', sources: [source.id] }, null, 'alice', '保存来源');
+    assert.deepEqual(store.lexical({ roleId: 'alice', query: '', scene: 'group', peerId: 123, limit: 20, semantic: false, archived: false }).map(memory => memory.id), [sourced.id]);
+    assert.equal(store.lexical({ roleId: 'alice', query: '', scene: 'private', peerId: 123, limit: 20, semantic: false, archived: false }).length, 0);
     const destination = join(testRoot, `${randomUUID()}-backup.sqlite`);
     await store.backup(destination);
     const restored = new Store(destination);
