@@ -10,7 +10,7 @@ import {
 } from './types.ts';
 import type { EventInput, Experience, Extension, Json, LifePlan, Media, Memory, MemoryInput, Operation, Recall, Revision, Role, RoleInput } from './types.ts';
 
-const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 type Row = Record<string, unknown>;
 function decode<T>(row: Row | undefined, schema: z.ZodType<T>): T | undefined {
   if (!row) return undefined;
@@ -32,6 +32,17 @@ export class Store {
     const version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version);
     if (version > SCHEMA_VERSION) throw new Error(`数据库版本 ${version} 超过当前支持的 ${SCHEMA_VERSION}`);
     if (version === 0) this.migrate();
+    if (version === 1) this.db.prepare('VACUUM INTO ?').run(`${path}.schema1-${Date.now()}-${randomUUID()}.sqlite`);
+    if (version < 2) this.db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE payloads(id TEXT NOT NULL,role_id TEXT NOT NULL,bytes INTEGER NOT NULL,mime TEXT NOT NULL,source TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(id,role_id,source));
+      CREATE TABLE perception_frames(id TEXT PRIMARY KEY,role_id TEXT NOT NULL,message_id TEXT UNIQUE NOT NULL,body TEXT NOT NULL CHECK(json_valid(body)),created_at TEXT NOT NULL);
+      CREATE TABLE activity_links(activity_id TEXT NOT NULL,kind TEXT NOT NULL,target_id TEXT NOT NULL,body TEXT NOT NULL CHECK(json_valid(body)),PRIMARY KEY(activity_id,kind,target_id));
+      CREATE INDEX activity_targets ON activity_links(kind,target_id);
+      CREATE TABLE consolidation_chunks(event_id TEXT NOT NULL REFERENCES events(id),part INTEGER NOT NULL,total INTEGER NOT NULL,digest TEXT NOT NULL,completed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(event_id,part));
+      PRAGMA user_version=2;
+      COMMIT;
+    `);
   }
 
   private migrate(): void {
@@ -103,6 +114,8 @@ export class Store {
       this.db.prepare('INSERT INTO documents VALUES(?,?,?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET role_id=excluded.role_id,revision=excluded.revision,body=excluded.body,updated_at=excluded.updated_at')
         .run(kind, id, roleId, revision, body, now());
       this.db.prepare('INSERT INTO revisions(entity,id,revision,actor,reason,body,time) VALUES(?,?,?,?,?,?,?)').run(kind, id, revision, actor, reason, body, now());
+      const activity = roleId && actor === roleId ? this.meta(`activity:${roleId}`) : undefined;
+      if (activity && ['role', 'memory', 'plan', 'operation'].includes(kind)) this.link(activity, kind, `${id}:${revision}`, { id, revision });
       this.touch();
     });
   }
@@ -230,12 +243,7 @@ export class Store {
       const id = input.id ?? randomUUID();
       const previous = this.get('memory', id, memorySchema);
       if (previous && previous.roleId !== input.roleId) throw new Error('记忆归属不能通过修订修改');
-      for (const source of input.sources) {
-        if (source === `role:${input.roleId}`) continue;
-        const event = this.db.prepare('SELECT role_id FROM events WHERE id=?').get(source);
-        const operation = this.get('operation', source, operationSchema);
-        if (event?.role_id !== input.roleId && operation?.roleId !== input.roleId) throw new Error(`记忆来源不存在或不属于当前角色：${source}`);
-      }
+      this.validateSources(input.roleId, input.sources);
       const memory = memorySchema.parse({ ...input, id, revision: expectedRevision === null ? 1 : expectedRevision + 1, createdAt: previous?.createdAt ?? now(), updatedAt: now() });
       this.put('memory', id, input.roleId, asJson(memory), expectedRevision, actor, reason);
       this.db.prepare('INSERT OR IGNORE INTO memory_rows(id,role_id) VALUES(?,?)').run(id, input.roleId);
@@ -284,11 +292,42 @@ export class Store {
     });
   }
   plans(roleId?: string): LifePlan[] { return this.list('plan', planSchema, roleId, 10000); }
+  validateSources(roleId: string, sources: string[], allowPersona = true): void {
+    if (!sources.length) throw new Error('必须提供真实来源');
+    for (const source of sources) {
+      if (allowPersona && source === `role:${roleId}`) continue;
+      const event = this.db.prepare('SELECT role_id FROM events WHERE id=?').get(source);
+      const operation = this.get('operation', source, operationSchema);
+      if (event?.role_id !== roleId && operation?.roleId !== roleId) throw new Error(`来源不存在或不属于当前角色：${source}`);
+    }
+  }
+  frame(messageId: string): Json | undefined { const row = this.db.prepare('SELECT body FROM perception_frames WHERE message_id=?').get(messageId); return row ? asJson(JSON.parse(String(row.body))) : undefined; }
+  saveFrame(id: string, roleId: string, messageId: string, body: Json): Json {
+    return this.transaction(() => {
+      const existing = this.frame(messageId); if (existing !== undefined) return existing;
+      this.db.prepare('INSERT INTO perception_frames VALUES(?,?,?,?,?)').run(id, roleId, messageId, JSON.stringify(body), now()); this.touch(); return body;
+    });
+  }
+  link(activityId: string, kind: string, targetId: string, body: Json = null): void { this.db.prepare('INSERT INTO activity_links VALUES(?,?,?,?) ON CONFLICT(activity_id,kind,target_id) DO UPDATE SET body=excluded.body').run(activityId, kind, targetId, JSON.stringify(body)); this.touch(); }
+  links(activityId: string, limit = 50, offset = 0): Json[] { return this.db.prepare('SELECT kind,target_id,body FROM activity_links WHERE activity_id=? ORDER BY rowid LIMIT ? OFFSET ?').all(activityId, limit, offset).map(row => ({ kind: String(row.kind), id: String(row.target_id), detail: asJson(JSON.parse(String(row.body))) })); }
+  chunk(eventId: string, part: number, total: number, digest: string): boolean {
+    this.db.prepare('INSERT OR IGNORE INTO consolidation_chunks VALUES(?,?,?,?,0)').run(eventId, part, total, digest);
+    const row = this.db.prepare('SELECT * FROM consolidation_chunks WHERE event_id=? AND part=?').get(eventId, part)!;
+    if (row.digest !== digest || Number(row.total) !== total) throw new Error('整理分片与已经保存的内容不一致');
+    return Boolean(row.completed);
+  }
+  completeChunk(eventId: string, part: number): void {
+    this.transaction(() => {
+      this.db.prepare('UPDATE consolidation_chunks SET completed=1 WHERE event_id=? AND part=?').run(eventId, part);
+      const remaining = Number(this.db.prepare('SELECT MAX(total)-SUM(completed) AS remaining FROM consolidation_chunks WHERE event_id=?').get(eventId)?.remaining);
+      if (remaining === 0) this.markConsolidated([eventId]); this.touch();
+    });
+  }
   plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new Error('计划不存在'); return plan; }
   savePlan(plan: LifePlan, expected: number | null, actor: string): void { this.put('plan', plan.id, plan.roleId, asJson(planSchema.parse(plan)), expected, actor, '修改目标或安排'); }
   operations(roleId?: string, limit = 100): Operation[] { return this.list('operation', operationSchema, roleId, limit); }
-  startOperation(accountId: string, roleId: string | null, tool: string, args: Json): Operation {
-    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null };
+  startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId: string; rootCallId: string }): Operation {
+    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null, callId: correlation?.callId ?? null, rootCallId: correlation?.rootCallId ?? null };
     this.put('operation', operation.id, roleId, asJson(operation), null, roleId ?? 'system', '开始工具调用');
     return operation;
   }

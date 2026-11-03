@@ -1,0 +1,55 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { isUtf8 } from 'node:buffer';
+import { z } from 'zod';
+import type { Store } from './store.ts';
+import { now, type Json } from './types.ts';
+import { fitText, readable, tokens } from './budget.ts';
+
+export const payloadReadSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(4).max(65536).default(4096) }).strict();
+export interface PayloadRef { payloadId: string; bytes: number; mime: string; source: string }
+
+/** 对象先完成原子落盘，数据库引用随后提交；内容以 SHA-256 寻址。 */
+export class Payloads {
+  constructor(readonly store: Store, readonly directory: string) {}
+  private path(id: string): string { return join(this.directory, id.slice(0, 2), id); }
+  async put(roleId: string, source: string, value: Json, signal?: AbortSignal): Promise<PayloadRef> {
+    this.store.role(roleId); signal?.throwIfAborted();
+    const body = JSON.stringify(value); const bytes = Buffer.byteLength(body); const id = createHash('sha256').update(body).digest('hex');
+    const path = this.path(id); await mkdir(join(this.directory, id.slice(0, 2)), { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${randomUUID()}.partial`;
+    const file = await open(temporary, 'wx', 0o600);
+    try { await file.writeFile(body, { encoding: 'utf8', signal }); await file.sync(); } finally { await file.close(); }
+    try { await rename(temporary, path); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+      if (createHash('sha256').update(await readFile(path)).digest('hex') !== id) throw error;
+      await unlink(temporary);
+    }
+    signal?.throwIfAborted();
+    this.store.db.prepare('INSERT OR IGNORE INTO payloads VALUES(?,?,?,?,?,?)').run(id, roleId, bytes, 'application/json', source, now());
+    return { payloadId: id, bytes, mime: 'application/json', source };
+  }
+  async view(roleId: string, source: string, value: Json, budget: number, signal?: AbortSignal): Promise<Json> {
+    const cleaned = readable(value); const text = JSON.stringify(cleaned);
+    if (tokens(text) <= budget && JSON.stringify(value) === text) return value;
+    const ref = await this.put(roleId, source, value, signal);
+    const overhead = tokens(JSON.stringify({ ...ref, preview: '', truncated: true, read: 'payload_read' })) + 32;
+    if (overhead >= budget) throw new Error('负载预览预算不足以容纳读取引用');
+    return { ...ref, preview: fitText(text, budget - overhead), truncated: true, read: 'payload_read' };
+  }
+  async read(roleId: string, input: z.input<typeof payloadReadSchema>, signal?: AbortSignal): Promise<Json> {
+    const query = payloadReadSchema.parse(input); signal?.throwIfAborted();
+    const row = this.store.db.prepare('SELECT bytes,mime FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(query.id, roleId);
+    if (!row) throw new Error('负载不存在或属于其他角色');
+    if (query.offset > Number(row.bytes)) throw new Error('负载读取位置超过正文');
+    const file = await open(this.path(query.id), 'r');
+    try {
+      const buffer = Buffer.alloc(query.limit); const { bytesRead } = await file.read(buffer, 0, buffer.length, query.offset); signal?.throwIfAborted();
+      let end = bytesRead; while (end > Math.max(0, bytesRead - 3) && !isUtf8(buffer.subarray(0, end))) end--;
+      if (!isUtf8(buffer.subarray(0, end))) throw new Error('读取位置必须位于 UTF-8 字符边界');
+      const next = query.offset + end;
+      return { id: query.id, offset: query.offset, text: buffer.subarray(0, end).toString('utf8'), bytes: Number(row.bytes), nextCursor: next < Number(row.bytes) ? next : null };
+    } finally { await file.close(); }
+  }
+}
