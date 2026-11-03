@@ -26,12 +26,12 @@ node scripts/admin.mjs doctor
 ```sh
 node scripts/verify-milky.mjs
 node scripts/verify-models.mjs
-node scripts/verify-panel.mjs
 node scripts/verify-harness.mjs
 node scripts/verify-life.mjs
 node scripts/verify-plans.mjs
 node scripts/verify-extensions.mjs
 node scripts/verify-v2.mjs
+node scripts/verify-panel.mjs
 node scripts/verify-v2.mjs resume
 node scripts/verify-docker.mjs kwagent:verification
 ```

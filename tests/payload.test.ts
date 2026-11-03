@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { Store, Payloads, loadConfig, tokens, fitText, sourceChunks, readable, invocationId, finishInvocation } from '@kwagent/core';
+import { Store, Payloads, loadConfig, tokens, fitText, sourceChunks, readable } from '@kwagent/core';
 
 test('真实负载对象支持 Unicode 分页、归属、取消与重启读取', async () => {
   const root = join(process.cwd(), '.artifacts/tests', randomUUID()); const store = new Store(join(root, 'state.sqlite'));
@@ -13,12 +13,16 @@ test('真实负载对象支持 Unicode 分页、归属、取消与重启读取',
   const payloads = new Payloads(store, join(root, 'artifacts')); const original = { text: '中文😀消息'.repeat(3000), bytes: 'base64://' + 'a'.repeat(10000) };
   try {
     const ref = await payloads.put('alice', 'source', original); const duplicate = await payloads.put('alice', 'another', original); assert.equal(ref.payloadId, duplicate.payloadId);
+    assert.equal(payloads.references('alice', { result: { ...ref } }).length, 1);
+    assert.equal(payloads.references('bob', { result: { ...ref } }).length, 0);
     const view = await payloads.view('alice', 'source', original, 512); assert.ok(tokens(JSON.stringify(view)) <= 512); assert.ok(!JSON.stringify(view).includes('a'.repeat(100)));
     let cursor = 0; let text = '';
     for (;;) { const page = await payloads.read('alice', { id: ref.payloadId, offset: cursor, limit: 127 }) as { text: string; nextCursor: number | null }; text += page.text; if (page.nextCursor === null) break; assert.ok(page.nextCursor > cursor); cursor = page.nextCursor; }
     assert.deepEqual(JSON.parse(text), original);
     await assert.rejects(payloads.read('bob', { id: ref.payloadId }), /属于其他角色/);
     await assert.rejects(payloads.read('alice', { id: ref.payloadId }, AbortSignal.abort()), /abort/i);
+    const unicode = await payloads.put('alice', 'unicode', '😀');
+    await assert.rejects(payloads.read('alice', { id: unicode.payloadId, offset: 4, limit: 4 }), /UTF-8/);
     store.close(); const restored = new Store(store.path); assert.ok(await new Payloads(restored, payloads.directory).read('alice', { id: ref.payloadId })); restored.close();
   } finally { store.close(); }
 });
@@ -49,7 +53,7 @@ test('预算统计与稳定分片使用 Harness 估算且保留全部文字', ()
 });
 
 test('调用身份按宿主执行 token 区分，跨角色或重复 callId 不会共用记录', () => {
+  const store = new Store(join(process.cwd(), '.artifacts/tests', `${randomUUID()}.sqlite`));
   const first = Symbol('call_0'), second = Symbol('call_0');
-  const id = invocationId(first); assert.equal(invocationId(first), id); assert.notEqual(invocationId(second), id);
-  finishInvocation(first); finishInvocation(second);
+  try { const id = store.invocationId(first); assert.equal(store.invocationId(first), id); assert.notEqual(store.invocationId(second), id); } finally { store.close(); }
 });

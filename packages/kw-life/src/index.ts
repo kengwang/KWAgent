@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, invocationId, finishInvocation } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store } from '@kwagent/core';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -127,9 +127,11 @@ export class Life extends Service {
       this.enqueue(roleId);
     } else {
       const timer = this.timers.get(roleId); if (timer) clearTimeout(timer); this.timers.delete(roleId);
+      this.dispatchAbort.get(roleId)?.abort();
       const agent = this.handles.get(roleId)?.agent;
       if (agent?.status === 'running') this.store.setMeta(`wake:${roleId}`, 'pending');
       agent?.cancel({ kind: 'hook', reason: `角色${state}` }, { keepInbox: true });
+      await this.dispatchWork.get(roleId);
       await this.plans.pause(roleId);
       await agent?.whenIdle();
       await this.extensions.suspend(roleId);
@@ -208,7 +210,7 @@ export class Life extends Service {
         try {
         const nextDecision = await next(); if (nextDecision.kind !== 'accept' || 'value' in nextDecision) return nextDecision;
         const decision = { ...nextDecision };
-        const executionId = invocationId(exec.token);
+        const executionId = this.store.invocationId(exec.token);
         if (this.activities.noProgress(roleId, exec.name, asJson(exec.arguments), asJson(result.isError ? result.error : result.value), exec)) decision.additionalContexts = [...decision.additionalContexts ?? [], { id: MessageId(`no-progress:${executionId}`), role: 'user', source: { kind: 'kw-event', roleId, eventIds: [`tool:${roleId}:${executionId}`] }, content: [{ type: 'text', text: '连续三次相同工具与参数得到相同结果，尚未观察到进展。请结合已有结果自主决定接下来的活动。' }] }];
         const content = decision.content ?? result.content;
         const value = asJson({ isError: result.isError, ...(result.isError ? { error: result.error } : {}), content, result, arguments: exec.arguments });
@@ -221,10 +223,10 @@ export class Life extends Service {
       });
       agentCtx.on('tools/result', (exec, result) => {
         try {
-        const executionId = invocationId(exec.token); const projected = this.toolViews.get(executionId); this.toolViews.delete(executionId);
+        const executionId = this.store.invocationId(exec.token); const projected = this.toolViews.get(executionId); this.toolViews.delete(executionId);
         const saved = this.store.appendEvent({ id: `tool:${roleId}:${executionId}`, accountId: role.accountId, roleId, source: 'tool', type: 'tool-result', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ executionId, callId: exec.callId, rootCallId: exec.rootCallId, name: exec.name, ...(projected ? { result: projected, isError: result.isError, ...(result.isError ? { failure: result.error } : {}) } : { arguments: exec.arguments, result }) }) }).event;
         this.activities.tool(roleId, executionId, exec.callId, exec.rootCallId, exec.name, { sourceId: saved.id, isError: result.isError });
-        } catch (error) { this.fail(error, roleId); throw error; } finally { finishInvocation(exec.token); }
+        } catch (error) { this.fail(error, roleId); throw error; }
       });
       agentCtx.on('session/event', (_session, event) => {
         try {
@@ -236,7 +238,7 @@ export class Life extends Service {
         }
         } catch (error) { this.fail(error, roleId); throw error; }
       });
-      if (role.state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
+      if (this.store.role(roleId).state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
     };
     const exists = await this.ctx.sessionPersistence.stat(SessionId(role.sessionId));
     const agentOptions = { provider: role.provider, model: role.model, maxTokens: 8192 };
@@ -244,6 +246,9 @@ export class Life extends Service {
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'standard' }, agentOptions, setup });
     this.handles.set(roleId, handle);
+    const currentRole = this.store.role(roleId);
+    if (currentRole.provider !== role.provider || currentRole.model !== role.model) handle.agent.model.select({ provider: currentRole.provider, model: currentRole.model });
+    if (currentRole.state !== 'active' || this.maintenance) await this.extensions.suspend(roleId);
     const recovered = await this.ctx.sessionQuery.readSession(SessionId(role.sessionId));
     this.activities.accepted.set(roleId, new Set(recovered.events.flatMap(event => event.type === 'user/message' ? [String(event.data.id)] : [])));
     this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId)!]);
@@ -278,7 +283,7 @@ export class Life extends Service {
     this.enqueue(event.roleId);
   }
   enqueue(roleId: string): void {
-    if (this.timers.has(roleId) || this.admission(roleId)) return;
+    if (this.timers.has(roleId) || this.dispatching.has(roleId) || this.admission(roleId)) return;
     const timer = setTimeout(() => {
       this.timers.delete(roleId);
       const task = this.dispatch(roleId).finally(() => this.dispatchWork.delete(roleId));
@@ -312,6 +317,7 @@ export class Life extends Service {
       }
       if (!events.length) return;
       const handle = await this.ensure(roleId);
+      controller.signal.throwIfAborted(); if (this.admission(roleId)) return;
       const query = events.map(event => JSON.stringify(readable(event.payload))).join('\n').slice(0, 4000);
       this.contexts.set(roleId, await this.ctx.kwMind.context(roleId, query, controller.signal));
       controller.signal.throwIfAborted();
@@ -332,7 +338,7 @@ export class Life extends Service {
       this.store.delivery(ids, messageId, 'delivered');
       this.store.setMeta(`wake:${roleId}`, 'delivered');
     } catch (error) { if (!controller.signal.aborted) throw error; }
-    finally { this.dispatching.delete(roleId); this.dispatchAbort.delete(roleId); }
+    finally { this.dispatching.delete(roleId); this.dispatchAbort.delete(roleId); if (this.store.pending(roleId, 1).length && !this.admission(roleId)) this.enqueue(roleId); }
   }
   manual(roleId: string, text: string, type = 'manual'): Experience {
     const role = this.store.role(roleId);

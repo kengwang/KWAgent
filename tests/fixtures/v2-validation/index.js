@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 import { estimateContent } from '@deepseek-ai/dsh-token-meter/estimate';
 import { PtcExecutor } from '@deepseek-ai/dsh-tool-executor-ptc';
 import { setTimeout as delay } from 'node:timers/promises';
-import { invocationId } from '@kwagent/core';
 
 export const name = 'kwagent-v2-validation';
 export const inject = ['kwLife', 'kwMind', 'tools', 'sessionQuery', 'systemPrompt', 'ptcRuntime'];
@@ -21,7 +20,7 @@ export async function apply(ctx) {
   ctx.tools.register({ name: 'verification_failure', description: '实际触发无效 URL 解析错误。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => { return new URL('invalid-url'); } });
   ctx.tools.register({ name: 'verification_cancel', description: '取消已经进入执行的本地等待。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (_args, exec) => { cancelBodyEntered = true; cancellation.abort(); await delay(5000, undefined, { signal: exec.signal }); return { completed: true }; } });
   ctx.tools.register({ name: 'verification_write_file', description: '实际保存文件并记录操作回执。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (_args, exec) => {
-    const operation = life.store.startOperation(life.store.role(roleId).accountId, roleId, 'verification_write_file', {}, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: invocationId(exec.token) });
+    const operation = life.store.startOperation(life.store.role(roleId).accountId, roleId, 'verification_write_file', {}, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: life.store.invocationId(exec.token) });
     const path = join(process.env.KW_DATA_ROOT, 'workspaces', roleId, 'operation-output.txt'); await writeFile(path, '实际文件操作回执'); life.store.finishOperation(operation.id, 'succeeded', { path }); return { operationId: operation.id, path };
   } });
   const execute = async code => ctx.tools.execute({ agent, signal: AbortSignal.timeout(30000), calls: [{ type: 'tool-call', id: `validation-${randomUUID()}`, name: 'run_code', arguments: JSON.stringify({ code, description: '验证实际工具执行与负载' }) }] });
@@ -52,6 +51,8 @@ export async function apply(ctx) {
   const operation = life.store.operations(roleId).find(item => item.tool === 'verification_write_file'); assert.ok(operation?.executionId);
   assert.ok(life.store.links(life.activities.current(roleId).id, 200).some(link => link.kind === 'receipt' && link.id === operation.id));
   const source = life.manual(roleId, '本地人格修订依据：记录长文档工具的实际执行。');
+  life.store.saveMemory({ roleId, kind: 'episode', title: '别名聚合检查', content: '本地检索关联测试，将两个账号和关键词保存在同一条目。', realm: 'fictional', epistemic: 'fictional', people: ['1136772134', String(life.context.kwLagrange.client.selfId)], aliases: ['园艺'], sources: [source.id], archived: false, attention: 0.5 }, null, 'owner', '验证检索关键词与账号资料分别保存');
+  const people = await life.operations.invoke('people.list', { roleId }); assert.ok(people.items.length); assert.ok(people.items.every(person => !person.aliases.includes('园艺')));
   const role = life.store.role(roleId); const frozen = ctx.kwMind.freeze(roleId, '{"memories":[]}');
   const revised = ctx.kwMind.selfRevise(roleId, { expectedRevision: role.revision, patch: { selfState: '已观察实际工具结果', expressionExamples: ['我想继续看看这份记录。'] }, reason: '读取本地执行依据', sources: [source.id] });
   assert.equal(revised.revision, role.revision + 1); assert.equal(ctx.kwMind.steps.get(roleId), frozen);
@@ -64,10 +65,12 @@ export async function apply(ctx) {
   const secondPage = await life.operations.invoke('events', { roleId, limit: 50, before: firstPage.nextCursor }); assert.ok(secondPage.items.length); assert.ok(!secondPage.items.some(item => firstPage.items.some(previous => previous.id === item.id)));
   await assert.rejects(life.operations.invoke('events', { roleId, limit: 201 }));
   const snapshot = life.snapshot(roleId); assert.ok(Buffer.byteLength(JSON.stringify(snapshot)) <= life.config.budgets.snapshotBytes);
+  const largeSource = life.store.events(roleId, 200).find(event => event.type === 'tool-result' && event.payload.result?.payloadId === selected); assert.ok(largeSource);
+  const sourceView = await life.operations.invoke('source.read', { roleId, id: largeSource.id }); assert.ok(sourceView.references.some(ref => ref.payloadId === selected));
   assert.ok(life.store.events(roleId).some(event => event.type === 'tool-result' && event.payload.rootCallId));
   const identities = life.store.events(roleId).filter(event => event.type === 'tool-result').map(event => event.payload.executionId); assert.ok(identities.every(id => typeof id === 'string')); assert.equal(new Set(identities).size, identities.length);
   await life.context.sessions.flush(agent.session);
-  const resultDocument = { toolProjection: true, fullPayload: true, noProgressOnce: true, failurePreserved: true, cancellationPreserved: true, invocationCorrelation: true, personaConflict: true, frozenStep: true, paginatedSources: true, planContextPreserved: true, snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)), payloads: refs.length, payloadId: selected };
+  const resultDocument = { toolProjection: true, fullPayload: true, noProgressOnce: true, failurePreserved: true, cancellationPreserved: true, invocationCorrelation: true, personaConflict: true, frozenStep: true, paginatedSources: true, planContextPreserved: true, sourcedAliases: true, nestedPayloadLinks: true, snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)), payloads: refs.length, payloadId: selected, largeSourceId: largeSource.id };
     await writeFile(join(directory, 'v2-validation.json'), JSON.stringify(resultDocument));
     } catch (error) { await writeFile(join(directory, 'v2-validation.json'), JSON.stringify({ error: error.message })); throw error; }
     return { kind: 'reject' };

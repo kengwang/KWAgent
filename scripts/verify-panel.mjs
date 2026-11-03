@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 
-function admin(action, payload) {
+function admin(action, payload = null) {
   const result = spawnSync(process.execPath, ['scripts/admin.mjs', action, JSON.stringify(payload)], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr);
   return JSON.parse(result.stdout);
@@ -76,12 +76,36 @@ try {
   await page.locator('.kw-detail').getByRole('button', { name: '读取完整负载', exact: true }).click();
   await page.locator('.kw-detail pre').nth(1).waitFor();
   await page.getByRole('button', { name: '关闭', exact: true }).click();
+  for (let index = 0; index < 55; index++) admin('event', { roleId: id, text: `分页验收记录 ${index}` });
+  await page.getByRole('button', { name: '活动', exact: true }).click();
+  const history = page.getByRole('region', { name: '原始经历', exact: true });
+  await expect(history.getByRole('button', { name: '阅读经历', exact: true })).toHaveCount(50);
+  await history.getByRole('button', { name: '读取更早经历', exact: true }).click();
+  await expect(history.getByRole('button', { name: '阅读经历', exact: true })).toHaveCount(55);
+  const other = `${id}-other`;
+  admin('role.create', { id: other, accountId: 'main', name: '其他角色的订阅检查', initialPersona: '本地订阅检查。', provider: current.provider, model: current.model });
+  admin('event', { roleId: other, text: '其他角色的更新应保留当前正在查阅的历史页。' });
+  const revision = admin('status').revision;
+  await expect.poll(async () => Number(await page.locator('.kw-panel').getAttribute('data-store-revision'))).toBeGreaterThanOrEqual(revision);
+  await page.waitForTimeout(250);
+  await expect(history.getByRole('button', { name: '阅读经历', exact: true })).toHaveCount(55);
+  await expect(history.getByRole('button', { name: '刷新列表', exact: true })).toBeVisible();
+  const native = JSON.parse(await readFile('.artifacts/verification/v2.json', 'utf8'));
+  await page.locator(`[data-role-id="${native.roleId}"]`).click();
+  await history.getByRole('button', { name: '读取更早经历', exact: true }).click();
+  await page.locator(`[data-event-id="${native.largeSourceId}"]`).getByRole('button', { name: '阅读经历', exact: true }).click();
+  await page.locator('.kw-detail').getByRole('button', { name: `读取引用负载 ${native.payloadId.slice(0, 12)}`, exact: true }).click();
+  await page.locator('.kw-detail pre').filter({ hasText: '真实工具生成的长内容' }).waitFor();
+  await expect(page.locator('.kw-detail').getByRole('button', { name: '读取后续正文', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.locator(`[data-role-id="${id}"]`).click();
+  await page.getByRole('button', { name: '记忆', exact: true }).click();
   await mkdir('.artifacts/browser', { recursive: true });
   await page.screenshot({ path: '.artifacts/browser/desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: '.artifacts/browser/mobile.png', fullPage: true });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ panel: 'passed', roleId: id, editConflict: true, searchEditRefresh: true, browserErrors: errors.length, screenshots: ['desktop.png', 'mobile.png'] }));
+  console.log(JSON.stringify({ panel: 'passed', roleId: id, editConflict: true, searchEditRefresh: true, historyPagesPreserved: true, nestedPayloadReadable: true, browserErrors: errors.length, screenshots: ['desktop.png', 'mobile.png'] }));
 } catch (error) {
   await mkdir('.artifacts/browser', { recursive: true });
   await page.screenshot({ path: '.artifacts/browser/failure.png', fullPage: true });

@@ -13,7 +13,7 @@ import type { Role, Memory, LifePlan, Experience, Operation, Json, Extension } f
 import contribution from '@kwagent/kw-panel/remote';
 import styles from './style.css?inline';
 import { RoleForm, PlanForm } from './forms.tsx';
-import { Timeline, EventHistory, People, CapabilityList, DetailReader, useRecords, type Detail } from './views.tsx';
+import { Timeline, EventHistory, People, CapabilityList, DetailReader, PageNotice, useRecords, type Detail } from './views.tsx';
 
 interface Snapshot {
   version: string; truncated: boolean;
@@ -76,20 +76,20 @@ function Panel({ ctx }: { ctx: Context }) {
   }, [roleId, connectionRevision]);
   const role = snapshot?.roles.find(role => role.id === roleId);
   const currentEdit = editing && editing !== 'new' ? snapshot?.roles.find(role => role.id === editing.id) : undefined;
-  const currentPlan = planPage.items.find(plan => plan.id === editingPlan?.id);
+  const currentPlan = snapshot?.plans.find(plan => plan.id === editingPlan?.id) ?? planPage.items.find(plan => plan.id === editingPlan?.id);
   useEffect(() => { setOlderMemories([]); setMemoryEnd(false); setEditingPlan(undefined); setEditing(null); }, [roleId]);
   useEffect(() => { if (detail && window.matchMedia('(max-width:760px)').matches) document.querySelector('.kw-detail')?.scrollIntoView({ block: 'start' }); }, [detail]);
   const act = (action: string, payload?: unknown) => { void call(action, payload).catch(() => {}); };
   const roleItems: (Role & { runtime?: { state: string } })[] = [...new Map([...moreRoles, ...(snapshot?.roles ?? [])].map(role => [role.id, role])).values()];
   const allMemories = [...new Map([...olderMemories, ...(snapshot?.memories ?? [])].map(memory => [memory.id, memory])).values()];
-  const memories = (found ?? allMemories).filter(memory => tab === '人物' ? ['person', 'relationship'].includes(memory.kind) : tab === '世界' ? memory.kind === 'world' : true);
+  const memories = (found ?? allMemories).map(memory => allMemories.find(current => current.id === memory.id && current.revision > memory.revision) ?? memory).filter(memory => tab === '人物' ? ['person', 'relationship'].includes(memory.kind) : tab === '世界' ? memory.kind === 'world' : true);
   const rawDetail = detail?.value && typeof detail.value === 'object' ? detail.value as Record<string, unknown> : null;
   const detailEvent = rawDetail?.summary && typeof rawDetail.summary === 'object' ? rawDetail.summary as Record<string, unknown> : rawDetail;
-  return <div className="kw-panel">
+  return <div className="kw-panel" data-store-revision={snapshot?.revision ?? 0}>
     <aside className="kw-roles">
       <header><h1>KWAgent</h1><Button size="sm" onClick={() => setEditing('new')}>创建角色</Button></header>
       <button className={!roleId ? 'kw-role selected' : 'kw-role'} onClick={() => setRoleId('')}>全部活动</button>
-      {roleItems.map(item => <button key={item.id} className={roleId === item.id ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(item.id); setFound(null); setDetail(null); }}>
+      {roleItems.map(item => <button key={item.id} data-role-id={item.id} className={roleId === item.id ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(item.id); setFound(null); setDetail(null); }}>
         <strong>{item.name}</strong><span>{stateLabels[item.runtime?.state ?? item.state] ?? item.state}</span>
       </button>)}
       {roleCursor !== null && <Button size="sm" onClick={() => { void call('records.list', { kind: 'role', cursor: roleCursor }).then(value => { const page = value as { items: Role[]; nextCursor: number | null }; setMoreRoles(previous => [...previous, ...page.items]); setRoleCursor(page.nextCursor); }).catch(() => {}); }}>{roleCursor ? '读取更多角色' : '读取角色列表'}</Button>}
@@ -118,15 +118,17 @@ function Panel({ ctx }: { ctx: Context }) {
         </>}
         {tab === '目标与安排' && <>
           <PlanForm key={editingPlan ? `${editingPlan.id}:${editingPlan.revision}` : roleId} roleId={roleId} call={call} initial={editingPlan} onDone={() => setEditingPlan(undefined)} />
+          <PageNotice page={planPage} />
           {planPage.items.map(plan => <article className="kw-entry" key={plan.id}><h3>{plan.title}</h3><p>{plan.instruction}</p><p>{{ goal: '持续目标', condition: '条件事项', time: '时间安排' }[plan.kind]} · {{ pending: '待安排', active: '进行中', paused: '已暂停', completed: plan.kind === 'time' ? '已投递' : '已完成', cancelled: '已取消', error: '需要处理' }[plan.status]}</p><div className="kw-actions"><Button size="sm" onClick={() => editPlan(plan.id, plan.roleId)}>修改</Button><Button size="sm" onClick={() => open('record.read', { roleId: plan.roleId, kind: 'plan', id: plan.id })}>详情</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'complete', id: plan.id, expectedRevision: plan.revision } })}>完成</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'cancel', id: plan.id, expectedRevision: plan.revision } })}>取消</Button></div></article>)}
           {planPage.nextCursor !== null && <Button onClick={planPage.more}>读取更多事项</Button>}
         </>}
         {tab === '能力' && <>
           <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>视觉：{snapshot.config.vision.model ?? '尚未配置'}</p><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
           <CapabilityList revision={snapshot.revision} call={call} open={open} /><h3>自主扩展</h3><ExtensionForm roleId={roleId} call={call} />
-          {extensionPage.items.map(extension => <article className="kw-entry" key={extension.id}><h3>{extension.packageName}</h3><p>{extension.state}</p><Button onClick={() => act('extension', { roleId: extension.roleId, request: { action: extension.enabled ? 'disable' : 'enable', id: extension.id } })}>{extension.enabled ? '停用' : '启用'}</Button></article>)}
+          <PageNotice page={extensionPage} />
+          {extensionPage.items.map(extension => <article className="kw-entry" key={`${extension.roleId}:${extension.id}`}><h3>{extension.packageName}</h3><p>{extension.state}</p><Button onClick={() => act('extension', { roleId: extension.roleId, request: { action: extension.enabled ? 'disable' : 'enable', id: extension.id } })}>{extension.enabled ? '停用' : '启用'}</Button></article>)}
           {extensionPage.nextCursor !== null && <Button onClick={extensionPage.more}>读取更多扩展</Button>}
-          <h3>工具记录</h3>{operationPage.items.map(operation => <article className="kw-entry" key={operation.id}><p>{operation.tool} · {operation.state}</p><Button size="sm" onClick={() => operation.roleId ? open('source.read', { roleId: operation.roleId, id: operation.id }) : setDetail(operation)}>读取回执与参数</Button></article>)}
+          <h3>工具记录</h3><PageNotice page={operationPage} />{operationPage.items.map(operation => <article className="kw-entry" key={operation.id}><p>{operation.tool} · {operation.state}</p><Button size="sm" onClick={() => operation.roleId ? open('source.read', { roleId: operation.roleId, id: operation.id }) : setDetail(operation)}>读取回执与参数</Button></article>)}
           {operationPage.nextCursor !== null && <Button onClick={operationPage.more}>读取更多操作</Button>}
         </>}
         {tab === '运维' && <><h3>服务器操作</h3><div className="kw-actions"><Button onClick={async () => setDetail(await call('doctor'))}>检查运行环境</Button><Button onClick={() => act(snapshot.maintenance ? 'resume' : 'quiesce')}>{snapshot.maintenance ? '恢复活动' : '进入维护'}</Button><Button disabled={busy} onClick={async () => setDetail(await call('backup'))}>创建备份</Button><Button disabled={busy} onClick={async () => setDetail(await call('reindex'))}>重建记忆索引</Button></div><p>应用版本 {snapshot.version} · Harness 0.2.2-alpha.2</p></>}

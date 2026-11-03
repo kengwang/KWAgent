@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
-import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now, invocationId } from '@kwagent/core';
+import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now } from '@kwagent/core';
 import type { Experience } from '@kwagent/core';
 import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTools, markdownUnsupported } from './client.ts';
 import { MilkyEvents } from './events.ts';
@@ -90,7 +90,7 @@ export class Lagrange extends Service {
               store.updateRole(roleId, { contacts: [...role.contacts, args.user_id] }, role.revision, roleId, '主动私聊建立联系人归属');
             }
           }
-          const result = await this.client.execute(tool.name, args, roleId, exec.signal, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: invocationId(exec.token) });
+          const result = await this.client.execute(tool.name, args, roleId, exec.signal, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: this.media.store.invocationId(exec.token) });
           if (isAccountMutation(tool.name)) for (const role of this.media.store.roles().filter(role => role.accountId === this.client.accountId)) {
             const event = this.media.store.appendEvent({ accountId: this.client.accountId, roleId: role.id, source: 'tool', type: 'account-profile-updated', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson({ actorRoleId: roleId, tool: tool.name, arguments: args, result }) }).event;
             this.received.emit('event', event);

@@ -6,7 +6,7 @@ import { asJson, type Json } from './types.ts';
 export function summary<T>(value: T, bytes: number): T {
   const object = asJson(value);
   if (!object || typeof object !== 'object' || Array.isArray(object)) throw new Error('摘要需要记录对象');
-  const bodyKeys = new Set(['payload', 'arguments', 'result', 'value', 'body', 'analysis', 'condition', 'timing']);
+  const bodyKeys = new Set(['payload', 'arguments', 'result', 'value', 'body', 'data', 'analysis', 'condition', 'timing']);
   const result: Record<string, Json> = {};
   for (const [key, item] of Object.entries(object)) {
     if (bodyKeys.has(key)) {

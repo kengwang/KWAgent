@@ -14,6 +14,18 @@ export interface PayloadRef { payloadId: string; bytes: number; mime: string; so
 export class Payloads {
   constructor(readonly store: Store, readonly directory: string) {}
   private path(id: string): string { return join(this.directory, id.slice(0, 2), id); }
+  references(roleId: string, value: Json): PayloadRef[] {
+    const refs = new Map<string, PayloadRef>();
+    const visit = (item: Json): void => {
+      if (!item || typeof item !== 'object') return;
+      if (!Array.isArray(item) && typeof item.payloadId === 'string' && /^[a-f0-9]{64}$/.test(item.payloadId)) {
+        const row = this.store.db.prepare('SELECT bytes,mime,source FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(item.payloadId, roleId);
+        if (row) refs.set(item.payloadId, { payloadId: item.payloadId, bytes: Number(row.bytes), mime: String(row.mime), source: String(row.source) });
+      }
+      for (const child of Object.values(item)) visit(child);
+    };
+    visit(value); return [...refs.values()];
+  }
   async value(roleId: string, id: string, signal?: AbortSignal): Promise<Json> {
     if (!/^[a-f0-9]{64}$/.test(id) || !this.store.db.prepare('SELECT 1 FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(id, roleId)) throw new Error('负载不存在或属于其他角色');
     const bytes = await readFile(this.path(id), { signal });
@@ -56,9 +68,10 @@ export class Payloads {
     if (query.offset > Number(row.bytes)) throw new Error('负载读取位置超过正文');
     const file = await open(this.path(query.id), 'r');
     try {
+      if ((await file.stat()).size !== Number(row.bytes)) throw new Error('负载文件长度与登记记录不一致');
       const buffer = Buffer.alloc(query.limit); const { bytesRead } = await file.read(buffer, 0, buffer.length, query.offset); signal?.throwIfAborted();
       let end = bytesRead; while (end > Math.max(0, bytesRead - 3) && !isUtf8(buffer.subarray(0, end))) end--;
-      if (!isUtf8(buffer.subarray(0, end))) throw new Error('读取位置必须位于 UTF-8 字符边界');
+      if ((bytesRead > 0 && end === 0) || !isUtf8(buffer.subarray(0, end))) throw new Error('读取位置必须位于 UTF-8 字符边界');
       const next = query.offset + end;
       return { id: query.id, offset: query.offset, text: buffer.subarray(0, end).toString('utf8'), bytes: Number(row.bytes), nextCursor: next < Number(row.bytes) ? next : null };
     } finally { await file.close(); }

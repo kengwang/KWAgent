@@ -24,6 +24,7 @@ export class Store {
   private depth = 0;
   private changed = false;
   private closed = false;
+  private readonly invocations = new WeakMap<symbol, string>();
 
   constructor(readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
@@ -91,6 +92,7 @@ export class Store {
     else this.changes.emit('change', this.revision());
   }
   revision(): number { return Number(this.db.prepare("SELECT value FROM meta WHERE key='revision'").get()?.value); }
+  invocationId(token: symbol): string { let id = this.invocations.get(token); if (!id) { id = randomUUID(); this.invocations.set(token, id); } return id; }
   meta(key: string): string | undefined { const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(key); return row ? z.string().parse(row.value) : undefined; }
   setMeta(key: string, value: string): void { this.db.prepare('INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value); this.touch(); }
 
