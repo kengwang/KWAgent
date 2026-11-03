@@ -21,6 +21,8 @@ node scripts/admin.mjs doctor
 
 服务器部署见 [部署说明](docs/deployment.md)，角色与 Module 的行为见 [运行与持久化](docs/architecture.md)。
 
+GitHub 自动检查、GHCR 镜像标签和私密文件规则见 [GitHub 与镜像发布](docs/github.md)。
+
 ## 验证
 
 ```sh

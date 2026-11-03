@@ -51,7 +51,7 @@ export async function apply(ctx) {
   const operation = life.store.operations(roleId).find(item => item.tool === 'verification_write_file'); assert.ok(operation?.executionId);
   assert.ok(life.store.links(life.activities.current(roleId).id, 200).some(link => link.kind === 'receipt' && link.id === operation.id));
   const source = life.manual(roleId, '本地人格修订依据：记录长文档工具的实际执行。');
-  life.store.saveMemory({ roleId, kind: 'episode', title: '别名聚合检查', content: '本地检索关联测试，将两个账号和关键词保存在同一条目。', realm: 'fictional', epistemic: 'fictional', people: ['1136772134', String(life.context.kwLagrange.client.selfId)], aliases: ['园艺'], sources: [source.id], archived: false, attention: 0.5 }, null, 'owner', '验证检索关键词与账号资料分别保存');
+  life.store.saveMemory({ roleId, kind: 'episode', title: '别名聚合检查', content: '本地检索关联测试，将两个账号和关键词保存在同一条目。', realm: 'fictional', epistemic: 'fictional', people: ['10001', String(life.context.kwLagrange.client.selfId)], aliases: ['园艺'], sources: [source.id], archived: false, attention: 0.5 }, null, 'owner', '验证检索关键词与账号资料分别保存');
   const people = await life.operations.invoke('people.list', { roleId }); assert.ok(people.items.length); assert.ok(people.items.every(person => !person.aliases.includes('园艺')));
   const role = life.store.role(roleId); const frozen = ctx.kwMind.freeze(roleId, '{"memories":[]}');
   const revised = ctx.kwMind.selfRevise(roleId, { expectedRevision: role.revision, patch: { selfState: '已观察实际工具结果', expressionExamples: ['我想继续看看这份记录。'] }, reason: '读取本地执行依据', sources: [source.id] });
@@ -59,7 +59,7 @@ export async function apply(ctx) {
   assert.throws(() => ctx.kwMind.selfRevise(roleId, { expectedRevision: role.revision, patch: { selfState: '过期修订' }, reason: '验证冲突', sources: [source.id] }), /已经更新/);
   assert.throws(() => ctx.kwMind.selfRevise(roleId, { expectedRevision: revised.revision, patch: { selfState: '错误来源' }, reason: '验证来源', sources: ['missing'] }), /来源/);
   assert.notEqual(ctx.kwMind.freeze(roleId, '{"memories":[]}'), frozen);
-  const plan = await life.plans.mutate(roleId, { action: 'create', kind: 'goal', title: '本地情境记录', instruction: '仅保存情境，不发送消息。', context: { scene: 'private', peerId: 1136772134 }, sources: [source.id] }); assert.equal(plan.context.peerId, 1136772134); assert.deepEqual(plan.sources, [source.id]);
+  const plan = await life.plans.mutate(roleId, { action: 'create', kind: 'goal', title: '本地情境记录', instruction: '仅保存情境，不发送消息。', context: { scene: 'private', peerId: life.context.kwLagrange.client.selfId }, sources: [source.id] }); assert.equal(plan.context.peerId, life.context.kwLagrange.client.selfId); assert.deepEqual(plan.sources, [source.id]);
   for (let index = 0; index < 55; index++) life.manual(roleId, `本地分页记录 ${index}`);
   const firstPage = await life.operations.invoke('events', { roleId, limit: 50 }); assert.equal(firstPage.items.length, 50); assert.ok(firstPage.nextCursor);
   const secondPage = await life.operations.invoke('events', { roleId, limit: 50, before: firstPage.nextCursor }); assert.ok(secondPage.items.length); assert.ok(!secondPage.items.some(item => firstPage.items.some(previous => previous.id === item.id)));

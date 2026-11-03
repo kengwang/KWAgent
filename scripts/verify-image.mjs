@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { existsSync, createWriteStream } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import { Store, Payloads } from '@kwagent/core';
+
+assert.equal(process.platform, 'linux');
+assert.equal(process.getuid(), 10001);
+assert.equal(process.versions.node, '24.18.0');
+for (const path of ['.env', '.git', '.artifacts', 'scripts/verify-social.mjs']) assert.equal(existsSync(path), false, path);
+for (const [command, args] of [['bun', ['--version']], ['git', ['--version']], ['ffmpeg', ['-version']]]) {
+  const result = spawnSync(command, args, { encoding: 'utf8' }); assert.equal(result.status, 0, command);
+  if (command === 'bun') assert.equal(result.stdout.trim(), '1.4.2');
+}
+await mkdir('/data/tmp', { recursive: true });
+const log = createWriteStream('/data/tmp/image-smoke.log');
+const child = spawn(process.execPath, ['scripts/start.mjs'], { env: { ...process.env, KW_BIND_IP: '127.0.0.1', LAGRANGE_BASE_URL: 'http://127.0.0.1:9/', LAGRANGE_TOOL_TIMEOUT_MS: '1000', KW_BACKUP_ENABLED: 'false' }, stdio: ['ignore', 'pipe', 'pipe'] });
+child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });
+const exited = once(child, 'exit');
+function admin(action, payload = null) {
+  const result = spawnSync(process.execPath, ['scripts/admin.mjs', action, JSON.stringify(payload)], { encoding: 'utf8', timeout: 20000 });
+  assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+}
+try {
+  let ready = false;
+  for (const deadline = Date.now() + 60000; Date.now() < deadline;) {
+    assert.equal(child.exitCode, null, 'Harness 提前退出');
+    const response = await fetch('http://127.0.0.1:3080/kw-health', { signal: AbortSignal.timeout(1000) }).catch(error => { if (!['ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(error.cause?.code)) throw error; });
+    if (response?.ok && (await response.json()).managementReady) { ready = true; break; }
+    await delay(250);
+  }
+  assert.equal(ready, true, 'Harness 管理界面未就绪，诊断位于 /data/tmp/image-smoke.log');
+  assert.equal(admin('doctor').database, 'ok');
+  const role = admin('role.create', { id: 'image-smoke', accountId: 'main', name: '镜像验证', initialPersona: '仅保存本地构建验证记录。', provider: 'deepseek-official', model: 'configured-at-deployment' });
+  assert.equal(role.state, 'disabled');
+  const event = admin('event', { roleId: role.id, text: '镜像中的 SQLite、Session 管理与对象目录可写。' });
+  const source = admin('source.read', { roleId: role.id, id: event.id });
+  assert.ok(admin('payload.read', { roleId: role.id, id: source.payloadId }).text.includes(event.id));
+  const duplicate = spawnSync(process.execPath, ['scripts/start.mjs'], { encoding: 'utf8', timeout: 10000 });
+  assert.notEqual(duplicate.status, 0); assert.match(duplicate.stderr, /ELOCKED/);
+  admin('quiesce');
+  const backup = admin('backup');
+  const restored = spawnSync(process.execPath, ['scripts/admin.mjs', 'restore', backup.directory, '/data/tmp/image-restored'], { encoding: 'utf8', timeout: 20000 }); assert.equal(restored.status, 0, restored.stderr);
+  const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
+  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
+  admin('shutdown');
+  const result = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error('Harness 未在期限内停止'); })]); assert.equal(result[0], 0);
+  console.log(JSON.stringify({ nonRoot: true, node: process.versions.node, harness: true, database: true, payload: true, singleInstance: true, backupRestore: true, noExternalNetwork: true }));
+} finally {
+  if (child.exitCode === null) { child.kill('SIGTERM'); await exited; }
+  log.end();
+}

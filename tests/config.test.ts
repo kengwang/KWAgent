@@ -4,7 +4,7 @@ import { loadConfig, publicConfig, redact } from '@kwagent/core';
 
 test('部署配置检查成对的模型字段和时区，公开状态脱敏', () => {
   const config = loadConfig({ KW_CHAT_API_KEY: 'local-secret', LAGRANGE_ACCESS_TOKEN: 'milky-secret' });
-  assert.equal(config.milky.baseUrl, 'https://agent-kw-milky.d1no.cn/');
+  assert.equal(config.milky.baseUrl, 'http://127.0.0.1:3000/');
   assert.equal(publicConfig(config).chat.credentialConfigured, true);
   assert.equal(JSON.stringify(publicConfig(config)).includes('local-secret'), false);
   assert.equal(redact('local-secret milky-secret Bearer other-secret', config), '[REDACTED] [REDACTED] Bearer [REDACTED]');

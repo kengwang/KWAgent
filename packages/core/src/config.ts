@@ -22,7 +22,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const config = configSchema.parse({
     dataRoot: resolve(env.KW_DATA_ROOT ?? './data'), publicUrl: emptyToUndefined(env.KW_PUBLIC_URL),
     timeZone: env.KW_TIME_ZONE,
-    milky: { baseUrl: env.LAGRANGE_BASE_URL ?? 'https://agent-kw-milky.d1no.cn/', token: emptyToUndefined(env.LAGRANGE_ACCESS_TOKEN), timeoutMs: env.LAGRANGE_TOOL_TIMEOUT_MS, reconcileSeconds: env.LAGRANGE_RECONCILE_INTERVAL_SECONDS },
+    milky: { baseUrl: env.LAGRANGE_BASE_URL ?? 'http://127.0.0.1:3000/', token: emptyToUndefined(env.LAGRANGE_ACCESS_TOKEN), timeoutMs: env.LAGRANGE_TOOL_TIMEOUT_MS, reconcileSeconds: env.LAGRANGE_RECONCILE_INTERVAL_SECONDS },
     chat: { baseUrl: emptyToUndefined(env.KW_CHAT_BASE_URL), apiKey: emptyToUndefined(env.KW_CHAT_API_KEY), provider: env.KW_LLM_PROVIDER ?? 'deepseek-official', model: emptyToUndefined(env.KW_LLM_MODEL) },
     vision: { baseUrl: emptyToUndefined(env.KW_VISION_BASE_URL) ?? emptyToUndefined(env.KW_CHAT_BASE_URL), apiKey: emptyToUndefined(env.KW_VISION_API_KEY) ?? emptyToUndefined(env.KW_CHAT_API_KEY), model: emptyToUndefined(env.KW_VISION_MODEL) ?? emptyToUndefined(env.KW_LLM_MODEL) },
     batchMs: env.KW_EVENT_BATCH_WINDOW_MS, memoryTokens: env.KW_CONTEXT_MEMORY_TOKENS,
