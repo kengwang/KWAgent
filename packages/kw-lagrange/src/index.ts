@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
-import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now } from '@kwagent/core';
+import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now, invocationId } from '@kwagent/core';
 import type { Experience } from '@kwagent/core';
 import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTools, markdownUnsupported } from './client.ts';
 import { MilkyEvents } from './events.ts';
@@ -18,6 +18,7 @@ import { MediaModule } from './media.ts';
 export { MilkyClient, responseData, MilkyBusinessError } from './client.ts';
 export { MilkyEvents } from './events.ts';
 export { MediaModule } from './media.ts';
+export { normalizeExperience, conversationOrder, NORMALIZER_VERSION } from './perception.ts';
 declare module '@deepseek-ai/cordis' { interface Context { kwLagrange: Lagrange } }
 
 /** 账号共享连接，角色获得完整工具目录及各自的执行归属。 */
@@ -35,6 +36,7 @@ export class Lagrange extends Service {
     super(ctx, 'kwLagrange');
     const config = loadConfig();
     this.client = new MilkyClient(config.milky, ctx.kwMind.store);
+    this.client.payloads = ctx.kwMind.payloads; this.client.previewTokens = config.budgets.tool;
     this.events = new MilkyEvents(this.client, ctx.kwMind.store, event => {
       this.received.emit('event', event);
       this.mediaQueue = this.mediaQueue.then(() => this.media.receive(event, this.mediaAbort.signal));
@@ -59,6 +61,7 @@ export class Lagrange extends Service {
   }
   async attach(ctx: Context, roleId: string): Promise<void> {
     await this.start();
+    registerTool(ctx, 'capability_read', '只读能力目录：区分远端声明、接入支持和最近账号回执。不会发送探测消息。Markdown 固定不支持。', z.object({ name: z.string().optional(), limit: z.number().int().min(1).max(200).default(50), cursor: z.number().int().nonnegative().default(0), detail: z.boolean().default(false) }).strict(), async input => this.client.capabilities.read(input.name, input.limit, input.cursor, input.detail));
     registerTool(ctx, 'operation_read', '查阅自己的工具操作意图、回执与结果未知记录。核实可能已经完成的发送或上传前先读取记录。', z.object({ id: z.string().optional(), limit: z.number().int().min(1).max(100).default(20) }), async input => {
       if (!input.id) return this.media.store.operations(roleId, input.limit);
       const operation = this.media.store.get('operation', input.id, operationSchema);
@@ -70,10 +73,10 @@ export class Lagrange extends Service {
       const validateOutput = tool.outputSchema ? this.ajv.compile(tool.outputSchema) : undefined;
       const definition = createMcpToolDefinition(ctx, {
         name: mcpToolName(tool.name), rawName: tool.name,
-        description: `${tool.description ?? tool.name}${messageSendTools.has(tool.name) ? `\n${markdownUnsupported}` : ''}`, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
+        description: `${tool.description ?? tool.name}\n${this.client.capabilities.description(tool.name)}`, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema,
         call: async (args, exec) => {
           assertSupportedMessage(tool.name, args);
-          if (!validateInput(args)) throw new Error(`Milky 参数无效：${this.ajv.errorsText(validateInput.errors)}`);
+          if (!validateInput(args)) { const message = `Milky 参数无效：${this.ajv.errorsText(validateInput.errors)}`; this.client.capabilities.record(tool.name, 'failed', { stage: 'input-schema', callId: exec.callId, roleId, message }); throw new Error(message); }
           if (['send_private_message', 'send_temp_message', 'upload_private_file'].includes(tool.name) && typeof args.user_id === 'number') {
             const store = this.ctx.kwMind.store;
             const owner = store.route(this.client.accountId, 'private', args.user_id);
@@ -87,12 +90,12 @@ export class Lagrange extends Service {
               store.updateRole(roleId, { contacts: [...role.contacts, args.user_id] }, role.revision, roleId, '主动私聊建立联系人归属');
             }
           }
-          const result = await this.client.execute(tool.name, args, roleId, exec.signal);
+          const result = await this.client.execute(tool.name, args, roleId, exec.signal, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: invocationId(exec.token) });
           if (isAccountMutation(tool.name)) for (const role of this.media.store.roles().filter(role => role.accountId === this.client.accountId)) {
             const event = this.media.store.appendEvent({ accountId: this.client.accountId, roleId: role.id, source: 'tool', type: 'account-profile-updated', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson({ actorRoleId: roleId, tool: tool.name, arguments: args, result }) }).event;
             this.received.emit('event', event);
           }
-          if (validateOutput && result.structuredContent && !validateOutput(result.structuredContent)) throw new Error(`Milky 结果不符合公布的 Schema：${this.ajv.errorsText(validateOutput.errors)}`);
+          if (validateOutput && result.structuredContent && !validateOutput(result.structuredContent)) { const message = `Milky 结果不符合公布的 Schema：${this.ajv.errorsText(validateOutput.errors)}`; this.client.capabilities.record(tool.name, 'failed', { stage: 'output-schema', remoteState: 'succeeded', callId: exec.callId, roleId, message }); throw new Error(message); }
           return result;
         },
       });

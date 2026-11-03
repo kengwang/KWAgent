@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readdirSync } from 'node:fs';
-import { Store, Payloads, loadConfig, tokens, fitText, sourceChunks, readable } from '@kwagent/core';
+import { spawnSync } from 'node:child_process';
+import { Store, Payloads, loadConfig, tokens, fitText, sourceChunks, readable, invocationId, finishInvocation } from '@kwagent/core';
 
 test('真实负载对象支持 Unicode 分页、归属、取消与重启读取', async () => {
   const root = join(process.cwd(), '.artifacts/tests', randomUUID()); const store = new Store(join(root, 'state.sqlite'));
@@ -31,7 +32,9 @@ test('Schema 1 自动快照、分片完成检查和不可变感知内容', () =>
     const snapshot = readdirSync(root).find(name => name.includes('.schema1-')); assert.ok(snapshot);
     const db = new DatabaseSync(join(root, snapshot)); assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 1); db.close();
     const event = store.appendEvent({ accountId: 'main', roleId: 'alice', source: 'manual', type: 'test', occurredAt: new Date().toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: 'long' }).event;
-    assert.equal(store.chunk(event.id, 0, 2, 'digest'), false); store.chunk(event.id, 1, 2, 'digest'); store.completeChunk(event.id, 0);
+    assert.equal(store.chunk(event.id, 0, 2, 'digest'), false); store.chunk(event.id, 1, 2, 'digest'); store.close();
+    const child = spawnSync(process.execPath, ['tests/fixtures/consolidation-crash.mjs'], { env: { ...process.env, KW_TEST_DB: path, KW_TEST_EVENT: event.id } }); assert.notEqual(child.status, 0);
+    store = new Store(path); assert.equal(store.chunk(event.id, 0, 2, 'digest'), true); assert.equal(store.chunk(event.id, 1, 2, 'digest'), false);
     assert.equal(store.unprocessed('alice').length, 1); store.completeChunk(event.id, 1); assert.equal(store.unprocessed('alice').length, 0);
     store.saveFrame('frame', 'alice', 'message', { text: '原始内容' }); assert.deepEqual(store.saveFrame('frame', 'alice', 'message', { text: '变化内容' }), { text: '原始内容' });
   } finally { store.close(); }
@@ -41,5 +44,12 @@ test('预算统计与稳定分片使用 Harness 估算且保留全部文字', ()
   const text = '中文🙂引用和附件'.repeat(2000); const chunks = sourceChunks(text, 512);
   assert.equal(chunks.join(''), text); for (const part of chunks) assert.ok(tokens(part) <= 512);
   assert.ok(tokens(fitText(text, 256)) <= 256); assert.deepEqual(readable({ bytes: 'abc' }), { bytes: { encoding: 'binary', characters: 3, state: '未读取字节内容' } });
+  assert.ok(!JSON.stringify(readable({ text: JSON.stringify({ image_data: 'A'.repeat(10000) }) })).includes('A'.repeat(100)));
   assert.equal(loadConfig({}).budgets.snapshotBytes, 524288);
+});
+
+test('调用身份按宿主执行 token 区分，跨角色或重复 callId 不会共用记录', () => {
+  const first = Symbol('call_0'), second = Symbol('call_0');
+  const id = invocationId(first); assert.equal(invocationId(first), id); assert.notEqual(invocationId(second), id);
+  finishInvocation(first); finishInvocation(second);
 });

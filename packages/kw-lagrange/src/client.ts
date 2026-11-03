@@ -2,7 +2,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
 import { asJson, CapabilityError, errorText, jsonSchema, now, Store } from '@kwagent/core';
-import type { AppConfig, Json, Operation } from '@kwagent/core';
+import type { AppConfig, Json, Operation, Payloads } from '@kwagent/core';
+import { Capabilities } from './capabilities.ts';
 
 const schemaObject = z.object({ type: z.literal('object') }).catchall(jsonSchema);
 export const milkyToolSchema = z.object({
@@ -47,7 +48,10 @@ export function responseData(result: { isError?: boolean; structuredContent?: Re
 
 /** 使用官方 MCP transport，保留远程合法的 boolean JSON Schema。 */
 export class MilkyClient {
-  readonly sdk = new Client({ name: 'kwagent', version: '0.1.0' }, { capabilities: {} });
+  payloads?: Payloads;
+  previewTokens = 2048;
+  readonly capabilities: Capabilities;
+  readonly sdk = new Client({ name: 'kwagent', version: '0.2.0' }, { capabilities: {} });
   tools: MilkyTool[] = [];
   selfId = 0;
   status: { state: string; since: string; error: string | null } = { state: 'disconnected', since: now(), error: null };
@@ -56,6 +60,7 @@ export class MilkyClient {
   private connecting?: Promise<void>;
   private readonly shutdown = new AbortController();
   constructor(readonly config: AppConfig['milky'], readonly store: Store, readonly accountId = 'main') {
+    this.capabilities = new Capabilities(store, accountId);
     this.sdk.onclose = () => { this.status = { state: 'disconnected', since: now(), error: this.status.error }; };
     this.sdk.onerror = error => { this.status = { state: 'error', since: now(), error: errorText(error) }; };
   }
@@ -105,12 +110,13 @@ export class MilkyClient {
   async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<Json> {
     return responseData(await this.rawCall(name, args, signal));
   }
-  async execute(name: string, args: Record<string, unknown>, roleId: string | null, signal?: AbortSignal) {
+  async execute(name: string, args: Record<string, unknown>, roleId: string | null, signal?: AbortSignal, correlation?: { callId: string; rootCallId: string; executionId?: string }) {
     assertSupportedMessage(name, args);
     const tool = this.tools.find(tool => tool.name === name);
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;
-    const operation = write ? this.store.startOperation(this.accountId, roleId, name, asJson(args)) : undefined;
+    const intent = roleId && this.payloads ? await this.payloads.view(roleId, `intent:${correlation?.callId ?? name}`, asJson(args), this.previewTokens, signal) : asJson(args);
+    const operation = write ? this.store.startOperation(this.accountId, roleId, name, intent, correlation) : undefined;
     const run = async () => {
       let dispatched = false;
       try {
@@ -118,10 +124,12 @@ export class MilkyClient {
         dispatched = true;
         const result = await this.rawCall(name, args, signal);
         responseData(result);
-        if (operation) this.store.finishOperation(operation.id, 'succeeded', asJson(result));
+        if (operation) this.store.finishOperation(operation.id, 'succeeded', roleId && this.payloads ? await this.payloads.view(roleId, operation.id, asJson(result), this.previewTokens) : asJson(result));
+        this.capabilities.record(name, 'succeeded', { operationId: operation?.id ?? null, roleId });
         return result;
       } catch (error) {
         if (operation) this.store.finishOperation(operation.id, error instanceof MilkyBusinessError || !dispatched ? 'failed' : 'unknown', { message: error instanceof Error ? error.message : String(error) });
+        this.capabilities.record(name, error instanceof MilkyBusinessError || !dispatched ? 'failed' : 'unknown', { operationId: operation?.id ?? null, roleId, message: errorText(error) });
         throw error;
       }
     };

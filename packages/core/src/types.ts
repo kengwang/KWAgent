@@ -12,6 +12,7 @@ export const roleSchema = z.object({
   initialPersona: z.string().min(1), persona: z.string().min(1),
   selfState: z.string().default(''), worldMode: realmSchema.default('real'),
   expressionExamples: z.array(z.string().min(1)).default([]),
+  personaSources: z.array(z.string()).default([]),
   provider: z.string().min(1), model: z.string().min(1),
   state: desiredStateSchema.default('disabled'), revision: z.number().int().positive().default(1),
   sessionId: z.string().min(1), groups: z.array(z.number().int().positive()).default([]),
@@ -24,7 +25,7 @@ export const roleSchema = z.object({
   createdAt: z.string(), updatedAt: z.string(),
 });
 export type Role = z.infer<typeof roleSchema>;
-export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true })
+export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true, personaSources: true })
   .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
 export type RoleInput = z.infer<typeof roleInputSchema>;
 
@@ -38,6 +39,19 @@ export const eventSchema = z.object({
 });
 export type Experience = z.infer<typeof eventSchema>;
 export type EventInput = Omit<Experience, 'id' | 'seq' | 'receivedAt' | 'activityId'> & { id?: string };
+
+export const perceptionFrameSchema = z.object({
+  id: z.string(), roleId: z.string(), messageId: z.string(), normalizerVersion: z.number().int().positive(),
+  eventIds: z.array(z.string()).readonly(),
+  contentRef: z.object({ payloadId: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative(), mime: z.string(), source: z.string() }).readonly(),
+  budget: z.object({ limit: z.number().int().positive(), estimatedTokens: z.number().int().nonnegative() }).readonly(),
+  omitted: z.number().int().nonnegative(), instruction: z.string(), content: z.array(jsonSchema).readonly(),
+}).readonly();
+export type PerceptionFrame = z.infer<typeof perceptionFrameSchema>;
+export function freezeJson<T>(value: T): T {
+  if (value && typeof value === 'object') { for (const item of Object.values(value)) freezeJson(item); Object.freeze(value); }
+  return value;
+}
 
 export const memorySchema = z.object({
   id: z.string(), roleId: z.string(), kind: z.enum(['episode', 'self', 'person', 'relationship', 'world', 'promise', 'focus']),
@@ -76,6 +90,7 @@ export const operationSchema = z.object({
   arguments: jsonSchema, state: z.enum(['started', 'succeeded', 'failed', 'unknown']),
   result: jsonSchema.nullable(), startedAt: z.string(), endedAt: z.string().nullable(),
   callId: z.string().nullable().default(null), rootCallId: z.string().nullable().default(null),
+  executionId: z.string().nullable().default(null),
 });
 export type Operation = z.infer<typeof operationSchema>;
 export const mediaSchema = z.object({

@@ -1,11 +1,16 @@
 import { z } from 'zod';
 import type { Context } from '@deepseek-ai/cordis';
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools';
-import { asJson } from './types.ts';
+import { asJson, jsonSchema } from './types.ts';
+import { randomUUID } from 'node:crypto';
+
+const invocations = new WeakMap<symbol, string>();
+export function invocationId(token: symbol): string { let id = invocations.get(token); if (!id) { id = randomUUID(); invocations.set(token, id); } return id; }
+export function finishInvocation(token: symbol): void { invocations.delete(token); }
 
 /** 模型输入经过 Zod 校验，输出采用 Harness 的正式工具结果路径。 */
 export function registerTool<T>(ctx: Context, name: string, description: string, schema: z.ZodType<T>, execute: (input: T, exec: ToolRunContext) => Promise<unknown>): void {
-  const parameters = z.toJSONSchema(schema, { unrepresentable: 'any', io: 'input' });
+  const parameters = z.record(z.string(), jsonSchema).parse(z.toJSONSchema(schema, { unrepresentable: 'any', io: 'input' }));
   const tool: ToolDefinition = {
     name, description, parameters,
     output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },

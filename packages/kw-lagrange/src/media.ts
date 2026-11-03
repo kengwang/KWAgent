@@ -194,8 +194,9 @@ export class MediaModule {
       result = { text };
     }
     const row = this.store.db.prepare("SELECT revision FROM documents WHERE kind='media' AND id=?").get(id);
-    this.store.put('media', id, roleId, asJson({ ...media, analysis: result }), Number(row?.revision), roleId, '保存媒体理解结果');
-    this.store.appendEvent({ accountId: this.store.role(roleId).accountId, roleId, source: 'media', type: 'media-analysis', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: { mediaId: id, result } });
+    const analysis = this.milky.payloads ? await this.milky.payloads.view(roleId, `media:${id}`, result, this.config.budgets.tool, signal) : result;
+    this.store.put('media', id, roleId, asJson({ ...media, analysis }), Number(row?.revision), roleId, '保存媒体理解结果');
+    this.store.appendEvent({ accountId: this.store.role(roleId).accountId, roleId, source: 'media', type: 'media-analysis', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: { mediaId: id, result: analysis } });
     return result;
   }
   async extractAudio(roleId: string, id: string, signal?: AbortSignal): Promise<Media> {

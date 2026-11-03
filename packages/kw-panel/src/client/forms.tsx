@@ -10,6 +10,7 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
   const [id, setId] = useState(initial?.id ?? '');
   const [persona, setPersona] = useState(initial?.persona ?? '');
   const [selfState, setSelfState] = useState(initial?.selfState ?? '');
+  const [examples, setExamples] = useState(initial?.expressionExamples.join('\n\n') ?? '');
   const [provider, setProvider] = useState(initial?.provider ?? config.provider);
   const [model, setModel] = useState(initial?.model ?? config.model ?? '');
   const [world, setWorld] = useState(initial?.worldMode ?? 'real');
@@ -24,7 +25,7 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
   const [budget, setBudget] = useState(initial?.memoryTokens ?? 8192);
   return <form className="kw-form" onSubmit={event => {
     event.preventDefault();
-    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, provider, model, worldMode: world,
+    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), provider, model, worldMode: world,
       groups: numbers(groups), contacts: numbers(contacts), globalGroups: global, defaultPrivate: privateRole,
       memoryTokens: budget, dailyRequests: requests ? Number(requests) : null, dailyTokens: tokens ? Number(tokens) : null,
       activeHours: start || end ? { start, end } : null }).catch(() => {});
@@ -34,6 +35,7 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
     <label>名称<input required value={name} onChange={event => setName(event.target.value)} /></label>
     <label>人格<textarea required rows={9} value={persona} onChange={event => setPersona(event.target.value)} /></label>
     <label>自我状态<textarea value={selfState} onChange={event => setSelfState(event.target.value)} /></label>
+    <label>表达示例<textarea rows={5} value={examples} onChange={event => setExamples(event.target.value)} placeholder="示例之间留空行，仅作为风格上下文。" /></label>
     <label>模型提供者<input required value={provider} onChange={event => setProvider(event.target.value)} /></label>
     <label>模型<input required value={model} onChange={event => setModel(event.target.value)} /></label>
     <label>世界模式<select value={world} onChange={event => setWorld(event.target.value as Role['worldMode'])}><option value="real">现实生活</option><option value="fictional">共同虚构世界</option><option value="mixed">现实与虚构并存</option></select></label>
@@ -68,9 +70,13 @@ export function PlanForm({ roleId, call, initial, onDone }: { roleId: string; ca
   const [types, setTypes] = useState(initial?.condition?.eventTypes.join(',') ?? '');
   const [peers, setPeers] = useState(initial?.condition?.peerIds.join(',') ?? '');
   const [busy, setBusy] = useState(false);
+  const [scene, setScene] = useState(initial?.context?.scene ?? '');
+  const [peerId, setPeerId] = useState(String(initial?.context?.peerId ?? ''));
+  const [sources, setSources] = useState(initial?.sources.join('\n') ?? '');
   return <form className="kw-form" onSubmit={event => {
     event.preventDefault();
     const value: Record<string, unknown> = { action: initial ? 'update' : 'create', ...(initial ? { id: initial.id, expectedRevision: initial.revision } : {}), kind, title, instruction };
+    value.context = scene ? { scene, peerId: Number(peerId) } : null; value.sources = sources.split(/\s+/).filter(Boolean);
     if (kind === 'condition') value.condition = { text: condition, eventTypes: types.split(/[,，\s]+/).filter(Boolean), peerIds: numbers(peers) };
     if (kind === 'time') {
       const values: Record<string, unknown> = { after: { kind: 'after', after_seconds: Number(seconds) }, every: { kind: 'every', every_seconds: Number(seconds) }, at: { kind: 'at', at }, daily: { kind: 'daily', daily: { time: clock, time_zone: zone } }, weekly: { kind: 'weekly', weekly: { time: clock, time_zone: zone, weekdays: numbers(weekdays) } }, cron: { kind: 'cron', cron: { expression, time_zone: zone } }, rrule: { kind: 'rrule', rrule: rule } };
@@ -83,6 +89,9 @@ export function PlanForm({ roleId, call, initial, onDone }: { roleId: string; ca
     <label>类型<select value={kind} onChange={event => setKind(event.target.value as LifePlan['kind'])}><option value="goal">持续目标</option><option value="condition">条件事项</option><option value="time">时间安排</option></select></label>
     <label>标题<input required value={title} onChange={event => setTitle(event.target.value)} /></label>
     <label>内容<textarea required value={instruction} onChange={event => setInstruction(event.target.value)} /></label>
+    <label>交流情境<select value={scene} onChange={event => setScene(event.target.value as typeof scene)}><option value="">内部自主活动</option><option value="group">群聊</option><option value="private">私聊</option></select></label>
+    {scene && <label>会话对象<input type="number" min="1" required value={peerId} onChange={event => setPeerId(event.target.value)} /></label>}
+    <label>来源引用<textarea value={sources} onChange={event => setSources(event.target.value)} placeholder="真实事件或操作 ID，使用空白分隔。" /></label>
     {kind === 'condition' && <><label>触发条件<textarea required value={condition} onChange={event => setCondition(event.target.value)} /></label><label>相关事件类型<input value={types} onChange={event => setTypes(event.target.value)} placeholder="留空表示任意事件，多个类型使用逗号分隔" /></label><label>相关会话<input value={peers} onChange={event => setPeers(event.target.value)} placeholder="留空表示任意会话" /></label></>}
     {kind === 'time' && <><label>时间规则<select value={timeKind} onChange={event => setTimeKind(event.target.value)}><option value="after">延迟一次</option><option value="at">指定时间</option><option value="every">固定周期</option><option value="daily">每日</option><option value="weekly">每周</option><option value="cron">Cron</option><option value="rrule">RRULE</option></select></label>
       {['after', 'every'].includes(timeKind) && <label>{timeKind === 'after' ? '延迟秒数' : '周期秒数'}<input type="number" required min={timeKind === 'every' ? 60 : 1} value={seconds} onChange={event => setSeconds(event.target.value)} /></label>}

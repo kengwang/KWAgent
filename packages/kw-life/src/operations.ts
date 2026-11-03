@@ -6,11 +6,12 @@ import { join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check } from 'proper-lockfile';
 import { z } from 'zod';
-import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, redact } from '@kwagent/core';
+import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, redact, SCHEMA_VERSION, summary } from '@kwagent/core';
 import type { Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { planRequestSchema } from './plans.ts';
 import { extensionRequestSchema } from './extensions.ts';
+import { query, readActions } from './queries.ts';
 
 export function adminSocket(dataRoot: string): string {
   return process.platform === 'win32' ? String.raw`\\.\pipe\kwagent-${createHash('sha256').update(resolve(dataRoot)).digest('hex').slice(0, 16)}` : join(dataRoot, 'run', 'admin.sock');
@@ -33,14 +34,15 @@ export class Operations {
       return task;
     }
     const task = this.execute(action, value);
-    if (['status', 'doctor', 'history', 'events', 'memory.list', 'source.read'].includes(action)) return task;
+    if (readActions.has(action)) return task;
     this.mutations.add(task);
     try { return await task; } finally { this.mutations.delete(task); }
   }
   async drain(): Promise<void> { await Promise.allSettled([...this.mutations]); }
   private async execute(action: string, value: Json): Promise<Json> {
     const life = this.life;
-    if (life.maintenance && !['status', 'doctor', 'resume', 'backup', 'quiesce', 'shutdown', 'history', 'events', 'memory.list', 'source.read'].includes(action)) throw new Error('应用正在维护，管理修改暂时停止');
+    if (life.maintenance && !readActions.has(action) && !['resume', 'backup', 'quiesce', 'shutdown'].includes(action)) throw new Error('应用正在维护，管理修改暂时停止');
+    const result = await query(life, action, value); if (result !== undefined) return result;
     switch (action) {
       case 'status': return life.snapshot(typeof value === 'object' && value !== null && 'roleId' in value && typeof value.roleId === 'string' ? value.roleId : undefined);
       case 'doctor': return asJson({ node: process.versions.node, bunRuntime: Boolean(process.versions.bun), database: life.store.integrity(), schema: life.store.db.prepare('PRAGMA user_version').get(), started: life.started, error: life.startupError, mcp: life.context.kwLagrange.client.status, events: life.context.kwLagrange.events.status, visionConfigured: Boolean(life.config.vision.model && life.config.vision.baseUrl) });
@@ -56,18 +58,9 @@ export class Operations {
         return asJson(await life.control(input.id, input.state));
       }
       case 'event': { const input = z.object({ roleId: z.string(), text: z.string().min(1) }).parse(value); return asJson(life.manual(input.roleId, input.text)); }
-      case 'events': { const input = z.object({ roleId: z.string().optional(), limit: z.number().int().min(1).max(500).default(100), before: z.number().int().optional() }).parse(value ?? {}); return asJson(life.store.events(input.roleId, input.limit, input.before)); }
       case 'events.transfer': { const input = z.object({ ids: z.array(z.string()).min(1).max(500), targetRoleId: z.string() }).parse(value); life.store.migrateEvents(input.ids, input.targetRoleId); return { transferred: input.ids.length }; }
-      case 'history': { const input = z.object({ entity: z.enum(['role', 'memory', 'plan', 'extension', 'operation']), id: z.string(), limit: z.number().int().min(1).max(500).default(100), before: z.number().int().positive().optional() }).parse(value); return asJson(life.store.history(input.entity, input.id, input.limit, input.before)); }
-      case 'memory.list': { const input = z.object({ roleId: z.string(), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(500).default(100) }).parse(value); return asJson(life.store.memories(input.roleId, input.limit, input.offset)); }
-      case 'source.read': {
-        const input = z.object({ roleId: z.string(), id: z.string() }).parse(value);
-        if (input.id === `role:${input.roleId}`) return asJson(life.store.role(input.roleId));
-        const operation = life.store.operations(input.roleId, 100000).find(operation => operation.id === input.id);
-        if (operation) return asJson(operation);
-        const event = life.store.event(input.id); if (event.roleId !== input.roleId) throw new Error('来源属于其他角色'); return asJson(event);
-      }
-      case 'memory.recall': return asJson(await life.context.kwMind.recall(recallSchema.parse(value)));
+      case 'self.revise': { const input = z.object({ roleId: z.string(), expectedRevision: z.number().int().positive(), patch: z.object({ persona: z.string().min(1).optional(), selfState: z.string().optional(), expressionExamples: z.array(z.string().min(1)).optional() }).strict(), reason: z.string().min(1), sources: z.array(z.string()).min(1) }).strict().parse(value); return asJson(life.context.kwMind.selfRevise(input.roleId, input, 'owner')); }
+      case 'memory.recall': return asJson((await life.context.kwMind.recall(recallSchema.parse(value))).map(memory => summary(memory, life.config.budgets.panelBodyBytes)));
       case 'memory.consolidate': {
         const input = z.object({ roleId: z.string() }).parse(value);
         const handle = await life.ensure(input.roleId);
@@ -111,7 +104,7 @@ export class Operations {
   async start(): Promise<void> {
     if (this.server) return;
     const root = this.life.config.dataRoot;
-    for (const name of ['run', 'backups', 'tmp', 'workspaces', 'extensions', 'cache', 'media']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
+    for (const name of ['run', 'backups', 'tmp', 'workspaces', 'extensions', 'cache', 'media', 'artifacts']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
     const socket = adminSocket(root);
     if (process.platform !== 'win32') await unlink(socket).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
     this.server = createServer((request, response) => {
@@ -152,12 +145,12 @@ export class Operations {
       await this.life.quiesce();
       await mkdir(join(directory, 'kwagent'), { recursive: true, mode: 0o700 });
       await this.life.store.backup(join(directory, 'kwagent', 'state.sqlite'));
-      for (const name of ['dsh', 'workspaces', 'extensions', 'media']) {
+      for (const name of ['dsh', 'workspaces', 'extensions', 'media', 'artifacts']) {
         const source = name === 'dsh' ? process.env.DSH_HOME ?? join(root, name) : join(root, name);
         if (await exists(source)) await cp(source, join(directory, name), { recursive: true, dereference: false, filter: path => !path.endsWith('.lock') && !path.includes(`${sep}node_modules${sep}.cache`) });
       }
       const files = await checksums(directory);
-      const manifest = { version: 1, createdAt: now(), appVersion: '0.1.0', harnessVersion: '0.2.2-alpha.2', schema: 1, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_IMAGE ?? null, files };
+      const manifest = { version: 1, createdAt: now(), appVersion: '0.2.0', harnessVersion: '0.2.2-alpha.2', schema: SCHEMA_VERSION, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_IMAGE ?? null, files };
       await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
       this.life.store.setMeta('last-backup', JSON.stringify({ directory, ...manifest, files: files.length }));
       const cutoff = Date.now() - this.life.config.backup.keepDays * 86400000;
@@ -208,5 +201,5 @@ export async function restoreBackup(source: string, destination: string): Promis
   await mkdir(root, { recursive: true });
   const entries = await readdir(root);
   if (entries.some(name => !['backups', 'run', 'cache', 'tmp'].includes(name))) throw new Error('恢复目标需要使用独立的空数据目录');
-  for (const name of ['kwagent', 'dsh', 'workspaces', 'extensions', 'media']) if (await exists(join(source, name))) await cp(join(source, name), join(root, name), { recursive: true, dereference: false });
+  for (const name of ['kwagent', 'dsh', 'workspaces', 'extensions', 'media', 'artifacts']) if (await exists(join(source, name))) await cp(join(source, name), join(root, name), { recursive: true, dereference: false });
 }

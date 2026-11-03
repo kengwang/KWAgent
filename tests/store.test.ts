@@ -72,6 +72,7 @@ test('中文全文检索、来源版本和备份在真实数据库提交', async
     assert.equal(store.rebuildSearch().count, 2);
     assert.throws(() => store.saveMemory({ ...a, content: '没有来源的内容', sources: ['missing'] }, 1, 'alice', '修订'), /来源/);
     assert.equal(store.memory(a.id).revision, 1);
+    assert.throws(() => store.saveMemory({ ...a, id: null, people: ['同名昵称'] }, null, 'alice', '检查稳定账号身份'), /账号标识/);
     const source = store.appendEvent({ accountId: 'main', roleId: 'alice', source: 'milky', type: 'message_receive', occurredAt: now(), scene: 'group', peerId: 123, senderId: 456, messageSeq: 100, self: false, payload: { text: '一起观察向日葵。' } }).event;
     const sourced = store.saveMemory({ ...a, id: null, title: '群内观察', sources: [source.id] }, null, 'alice', '保存来源');
     assert.deepEqual(store.lexical({ roleId: 'alice', query: '', scene: 'group', peerId: 123, limit: 20, semantic: false, archived: false }).map(memory => memory.id), [sourced.id]);

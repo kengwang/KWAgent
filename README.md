@@ -31,12 +31,18 @@ node scripts/verify-harness.mjs
 node scripts/verify-life.mjs
 node scripts/verify-plans.mjs
 node scripts/verify-extensions.mjs
+node scripts/verify-v2.mjs
+node scripts/verify-v2.mjs resume
 node scripts/verify-docker.mjs kwagent:verification
 ```
 
 这些命令验证只读 Milky 连接、聊天与图片理解、真实浏览器流程、记忆保存、备份恢复、自主工具调用和容器重启。浏览器和 Harness 命令需要先启动本地应用。自主活动验收创建无会话绑定的专用角色，并用实际 Harness 工具守卫禁止该角色调用 QQ 工具；结束后暂停角色并停用验收扩展。模型验收应依次执行。
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
+
+v0.2.0 增加不可变感知批次、活动时间线、人物与来源浏览、统一能力目录和有界负载读取。原始 JSON 与长文档保存到持久目录 `artifacts/`，`payload_read` 使用角色授权和 UTF-8 字节游标读取。`self_revise` 修订人格、自我状态与表达示例，并保存真实来源；`capability_read` 查询 Schema、接入支持及最近调用证据。Markdown 消息发送不支持。
+
+`verify-v2` 使用实际 Harness 与 PTC 执行长文档生成、失败及取消，验证有界预览、完整负载、分页、修订冲突和步骤快照。应用重启后执行 `resume` 检查持久引用。上述流程禁止 QQ 与空间发送。
 
 浏览器扩展验收遇到待重启状态时，重启应用后执行 `node scripts/verify-extensions.mjs resume`，继续检查实际加载和卸载。
 

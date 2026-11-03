@@ -13,11 +13,14 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 ```sh
 bun install --frozen-lockfile
 node scripts/ci.mjs
+node scripts/release.mjs --candidate
 node scripts/release.mjs
 node scripts/deploy.mjs
 ```
 
-发布和部署要求干净的 Git 工作目录。发布标签、镜像版本与提交一一对应。已有版本镜像不覆盖。
+发布和部署要求受版本管理的修改全部提交。发布构建直接使用 `git archive` 的提交内容，未提交的个人脚本不进入镜像。候选镜像通过 Linux 容器验收后才登记版本镜像与标签。发布标签、镜像版本与提交一一对应，已有发布物保持不变。
+
+`--candidate` 完成构建与验收后保留候选镜像。正式发布继续执行相同检查，并登记版本镜像与标签。迁移验收使用保留的 `kwagent:0.1.0` 镜像，在独立测试卷中生成旧数据库、升级和检查快照；不会操作现有业务卷。
 
 首次手动准备和启动也可以执行：
 
@@ -49,7 +52,9 @@ docker compose exec -T kwagent node scripts/admin.mjs resume
 
 ## 备份和恢复
 
-每天按配置时间创建备份，保留期限由 `KW_BACKUP_KEEP_DAYS` 指定。完整备份包含数据库、Session、工作目录、扩展和媒体，以及版本清单与校验和。
+每天按配置时间创建备份，保留期限由 `KW_BACKUP_KEEP_DAYS` 指定。完整备份包含数据库、Session、工作目录、扩展、媒体和 `artifacts/` 负载对象，以及版本清单与校验和。
+
+v0.2.0 启动时将数据库升级到 Schema 2，并在迁移前保存 Schema 1 的 SQLite 快照。正常升级仍应执行完整备份。新建对象目录使用 UID/GID 10001 和私有权限；全部中间文件继续写入 `/data/tmp`。
 
 停止应用后，恢复到独立目录：
 

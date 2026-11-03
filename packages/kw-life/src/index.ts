@@ -2,8 +2,10 @@ import { Context, Service } from '@deepseek-ai/cordis';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent';
 import { MessageId, isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
+import { estimateContent, estimateMessage, estimateToolsTokens, ROLE_OVERHEAD } from '@deepseek-ai/dsh-token-meter/estimate';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
-import { SessionId } from '@deepseek-ai/dsh-session';
+import { SessionId, appendPluginRecord } from '@deepseek-ai/dsh-session';
+import type {} from '@deepseek-ai/dsh-session-query';
 import type {} from '@deepseek-ai/dsh-cmdline';
 import type {} from '@deepseek-ai/dsh-agent-preset-registry';
 import type {} from '@deepseek-ai/dsh-session-persistence';
@@ -12,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, invocationId, finishInvocation } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store } from '@kwagent/core';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -22,12 +24,15 @@ import { Plans, planRequestSchema, scheduleNotices } from './plans.ts';
 import type { PlanRequest } from './plans.ts';
 import { Extensions, extensionRequestSchema } from './extensions.ts';
 import { Operations } from './operations.ts';
+import { preparePerception } from './perception.ts';
+import { Activities, activitySchema } from './activities.ts';
 
 export { Plans, planRequestSchema, timingSchema } from './plans.ts';
 export { Extensions, extensionRequestSchema } from './extensions.ts';
 export { restoreBackup } from './operations.ts';
 declare module '@deepseek-ai/cordis' { interface Context { kwLife: Life } }
 declare module '@deepseek-ai/dsh-llm/message' { interface MessageSourceMap { 'kw-event': { kind: 'kw-event'; roleId: string; eventIds: string[] } } }
+declare module '@deepseek-ai/dsh-session' { interface PluginRecordMap { 'plugin:kwagent/context': Json; 'plugin:kwagent/payload': Json } }
 
 interface RoleRuntime { state: string; error: string | null; lastActivityAt: string | null }
 
@@ -38,6 +43,7 @@ export class Life extends Service {
   readonly plans: Plans;
   readonly extensions: Extensions;
   readonly operations: Operations;
+  readonly activities: Activities;
   readonly store: Store;
   readonly config: AppConfig;
   maintenance = false;
@@ -48,6 +54,7 @@ export class Life extends Service {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingTasks = new Set<Promise<unknown>>();
   private readonly contexts = new Map<string, string>();
+  private readonly toolViews = new Map<string, Json>();
   private readonly dispatchAbort = new Map<string, AbortController>();
   private readonly dispatchWork = new Map<string, Promise<void>>();
   private closing = false;
@@ -66,6 +73,7 @@ export class Life extends Service {
     this.plans = new Plans(ctx, ctx.kwMind.store);
     this.extensions = new Extensions(ctx.kwMind.store, ctx.kwMind.config.dataRoot, ctx);
     this.operations = new Operations(this);
+    this.activities = new Activities(this.store);
   }
   get context() { return this.ctx; }
   track<T>(promise: Promise<T>, roleId?: string): void {
@@ -102,7 +110,7 @@ export class Life extends Service {
   }
   async update(id: string, patch: Partial<Role>, expected: number): Promise<Role> {
     const previous = this.store.role(id);
-    const role = this.store.updateRole(id, patch, expected, 'owner', '人工修改角色');
+    const role = this.store.updateRole(id, { ...patch, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
     if (role.state !== previous.state) await this.control(id, role.state, false);
     const agent = this.handles.get(id)?.agent;
     if (agent && (role.provider !== previous.provider || role.model !== previous.model)) agent.model.select({ provider: role.provider, model: role.model });
@@ -147,7 +155,7 @@ export class Life extends Service {
       await this.ctx.kwLagrange.attach(agentCtx, roleId);
       registerTool(agentCtx, 'life_plan', '管理自己的目标、条件事项和唤醒安排。可以自行创建、修改、完成或取消。', planRequestSchema, input => this.plans.mutate(roleId, input));
       registerTool(agentCtx, 'extension_manage', '使用 Bun 管理自己的 Skill、脚本与 Node ESM 扩展依赖。', extensionRequestSchema, (input, exec) => this.extensions.manage(roleId, input, agentCtx, exec.signal));
-      agentCtx.systemPrompt.context({ name: 'kw-life-state', order: 900, required: true, interpolate: false, text: () => JSON.stringify({ ...JSON.parse(this.contexts.get(roleId) ?? '{}'), role: this.store.role(roleId), plans: this.store.plans(roleId) }) });
+      agentCtx.systemPrompt.context({ name: 'kw-life-state', order: 900, required: true, interpolate: false, text: () => this.ctx.kwMind.steps.get(roleId) ?? '' });
       agentCtx.on('agent/pre-step', async (payload, next) => {
         const reason = this.admission(roleId);
         if (reason) {
@@ -176,13 +184,17 @@ export class Life extends Service {
         payload.messages.splice(0, payload.messages.length, ...admitted);
         if (hadInput && !payload.messages.length) return { kind: 'reject' };
         if (scheduleContext.length) this.contexts.set(roleId, await this.ctx.kwMind.context(roleId, scheduleContext.join('\n'), payload.signal));
+        const frozen = this.ctx.kwMind.freeze(roleId, this.contexts.get(roleId) ?? '{"memories":[]}');
+        const ref = await this.ctx.kwMind.payloads.put(roleId, `step:${role.sessionId}:${payload.turn}:${payload.step}`, asJson(JSON.parse(frozen)), payload.signal);
+        appendPluginRecord(payload.agent.session, 'plugin:kwagent/context', asJson({ roleId, turn: payload.turn, step: payload.step, ...ref, estimatedTokens: tokens(frozen), inputs: payload.messages.map(message => message.id) }));
+        const activity = this.activities.current(roleId); if (activity) this.store.link(activity.id, 'context', `${payload.turn}:${payload.step}`, asJson(ref));
         return next();
       });
       agentCtx.tools.guard(() => this.admission(roleId) ?? undefined);
       agentCtx.on('agent/turn-stopping', async payload => {
         if (this.admission(roleId)) return;
         await this.ctx.kwMind.consolidate(payload.agent, roleId, payload.signal);
-        this.store.completeDelivered(roleId, payload.agent.session.snapshotEvents().flatMap(event => event.type === 'user/message' ? [event.data.id] : []));
+        this.store.completeDelivered(roleId, [...this.activities.accepted.get(roleId) ?? []]);
         await this.ctx.sessions.flush(payload.agent.session);
       });
       agentCtx.on('agent/status', ({ status }) => {
@@ -192,15 +204,37 @@ export class Life extends Service {
         if (status === 'idle' && this.store.pending(roleId).length) this.enqueue(roleId);
       });
       agentCtx.on('agent/error', ({ error }) => this.fail(error, roleId));
+      agentCtx.on('tools/post-execute', async (exec, result, next) => {
+        try {
+        const nextDecision = await next(); if (nextDecision.kind !== 'accept' || 'value' in nextDecision) return nextDecision;
+        const decision = { ...nextDecision };
+        const executionId = invocationId(exec.token);
+        if (this.activities.noProgress(roleId, exec.name, asJson(exec.arguments), asJson(result.isError ? result.error : result.value), exec)) decision.additionalContexts = [...decision.additionalContexts ?? [], { id: MessageId(`no-progress:${executionId}`), role: 'user', source: { kind: 'kw-event', roleId, eventIds: [`tool:${roleId}:${executionId}`] }, content: [{ type: 'text', text: '连续三次相同工具与参数得到相同结果，尚未观察到进展。请结合已有结果自主决定接下来的活动。' }] }];
+        const content = decision.content ?? result.content;
+        const value = asJson({ isError: result.isError, ...(result.isError ? { error: result.error } : {}), content, result, arguments: exec.arguments });
+        const view = await this.ctx.kwMind.payloads.view(roleId, `tool:${roleId}:${executionId}`, value, this.config.budgets.tool, exec.signal);
+        if (view === value) return decision;
+        this.toolViews.set(executionId, view);
+        appendPluginRecord(agent.session, 'plugin:kwagent/payload', asJson({ executionId, callId: exec.callId, rootCallId: exec.rootCallId, view }));
+        return { ...decision, content: [...content.filter(block => block.type !== 'text'), { type: 'text' as const, text: JSON.stringify(view) }] };
+        } catch (error) { if (!exec.signal.aborted) this.fail(error, roleId); throw error; }
+      });
       agentCtx.on('tools/result', (exec, result) => {
-        this.store.appendEvent({ accountId: role.accountId, roleId, source: 'tool', type: 'tool-result', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ name: exec.name, arguments: exec.arguments, result }) });
+        try {
+        const executionId = invocationId(exec.token); const projected = this.toolViews.get(executionId); this.toolViews.delete(executionId);
+        const saved = this.store.appendEvent({ id: `tool:${roleId}:${executionId}`, accountId: role.accountId, roleId, source: 'tool', type: 'tool-result', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ executionId, callId: exec.callId, rootCallId: exec.rootCallId, name: exec.name, ...(projected ? { result: projected, isError: result.isError, ...(result.isError ? { failure: result.error } : {}) } : { arguments: exec.arguments, result }) }) }).event;
+        this.activities.tool(roleId, executionId, exec.callId, exec.rootCallId, exec.name, { sourceId: saved.id, isError: result.isError });
+        } catch (error) { this.fail(error, roleId); throw error; } finally { finishInvocation(exec.token); }
       });
       agentCtx.on('session/event', (_session, event) => {
+        try {
+        this.activities.event(roleId, role.sessionId, event);
         if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
         if (event.type === 'job/settled') {
           const experience = this.store.appendEvent({ id: `job:${roleId}:${event.data.jobId}:settled`, accountId: role.accountId, roleId, source: 'system', type: 'background-complete', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(event.data) });
           if (experience.inserted) this.enqueue(roleId);
         }
+        } catch (error) { this.fail(error, roleId); throw error; }
       });
       if (role.state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
     };
@@ -210,7 +244,11 @@ export class Life extends Service {
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'standard' }, agentOptions, setup });
     this.handles.set(roleId, handle);
-    this.store.recoverDeliveries(roleId, handle.agent.session.snapshotEvents().flatMap(event => event.type === 'user/message' ? [event.data.id] : []));
+    const recovered = await this.ctx.sessionQuery.readSession(SessionId(role.sessionId));
+    this.activities.accepted.set(roleId, new Set(recovered.events.flatMap(event => event.type === 'user/message' ? [String(event.data.id)] : [])));
+    this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId)!]);
+    for (const activity of this.store.list('activity', activitySchema, roleId, 200)) if (activity.state === 'running') this.store.put('activity', activity.id, roleId, asJson({ ...activity, state: 'interrupted', endedAt: now(), revision: activity.revision + 1 }), activity.revision, 'system', '恢复未完成活动');
+    this.store.setMeta(`activity:${roleId}`, '');
     if (!exists) this.store.appendEvent({ id: `init:${roleId}`, accountId: role.accountId, roleId, source: 'system', type: 'initialize', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: { instruction: '认识当前环境与可用工具，自主决定自己的目标、活动和后续安排。' } });
     return handle;
   }
@@ -235,7 +273,7 @@ export class Life extends Service {
       if (plan.kind !== 'condition' || plan.status !== 'active' || !plan.condition) continue;
       if (plan.condition.eventTypes.length && !plan.condition.eventTypes.includes(event.type)) continue;
       if (plan.condition.peerIds.length && (event.peerId === null || !plan.condition.peerIds.includes(event.peerId))) continue;
-      this.store.appendEvent({ id: `condition:${plan.id}:${event.id}`, accountId: event.accountId, roleId: event.roleId, source: 'system', type: 'condition-candidate', occurredAt: now(), scene: event.scene, peerId: event.peerId, senderId: null, messageSeq: null, self: false, payload: { planId: plan.id, sourceEventId: event.id, condition: plan.condition.text, instruction: plan.instruction } });
+      this.store.appendEvent({ id: `condition:${plan.id}:${event.id}`, accountId: event.accountId, roleId: event.roleId, source: 'system', type: 'condition-candidate', occurredAt: now(), scene: event.scene, peerId: event.peerId, senderId: null, messageSeq: null, self: false, payload: { planId: plan.id, sourceEventId: event.id, condition: plan.condition.text, instruction: plan.instruction, context: plan.context, sources: plan.sources } });
     }
     this.enqueue(event.roleId);
   }
@@ -274,18 +312,19 @@ export class Life extends Service {
       }
       if (!events.length) return;
       const handle = await this.ensure(roleId);
-      const query = events.map(event => JSON.stringify(event.payload)).join('\n').slice(0, 4000);
+      const query = events.map(event => JSON.stringify(readable(event.payload))).join('\n').slice(0, 4000);
       this.contexts.set(roleId, await this.ctx.kwMind.context(roleId, query, controller.signal));
       controller.signal.throwIfAborted();
       if (this.admission(roleId)) return;
       const messageId = batch.messageId ?? `kw-${createHash('sha256').update(events.map(event => event.id).join('\n')).digest('hex')}`;
       const ids = events.map(event => event.id);
+      const frame = await preparePerception(this.store, this.ctx.kwMind.payloads, roleId, events, messageId, this.config.budgets.perception, controller.signal);
       this.store.delivery(ids, messageId, 'prepared');
-      const alreadyInSession = handle.agent.session.snapshotEvents().some(event => event.type === 'user/message' && event.data.id === messageId) || [...handle.agent.inbox.nextTurn, ...handle.agent.inbox.nextStep].some(message => message.id === messageId);
+      const alreadyInSession = this.activities.accepted.get(roleId)?.has(messageId) || [...handle.agent.inbox.nextTurn, ...handle.agent.inbox.nextStep].some(message => message.id === messageId);
       if (!alreadyInSession) {
         const message: UserMessage = {
           id: MessageId(messageId), role: 'user', source: { kind: 'kw-event', roleId, eventIds: ids },
-          content: [{ type: 'text', text: `这些是新感知的经历。你可以行动、继续观察或休息。原文与事件来源保留，可以使用 memory_read 继续查阅。\n${JSON.stringify(events.map(event => ({ ...event, payload: undefined, payloadPreview: JSON.stringify(event.payload).slice(0, 6000) })))}` }],
+          content: [{ type: 'text', text: JSON.stringify(frame) }],
         };
         handle.agent.steer(message);
       }
@@ -322,17 +361,24 @@ export class Life extends Service {
   }
   async resume(): Promise<void> { if (this.closing) return; await this.maintenanceTask; this.maintenanceTask = undefined; this.maintenance = false; await this.plans.resume(); for (const role of this.store.roles()) if (role.state === 'active') { const handle = await this.ensure(role.id); await this.extensions.restore(role.id, handle.agent.ctx); this.enqueue(role.id); } }
   snapshot(roleId?: string): Json {
-    return asJson({ revision: this.store.revision(), version: '0.1.0', maintenance: this.maintenance, started: this.started, startupError: this.startupError,
-      roles: this.store.roles().map(role => ({ ...role, runtime: this.runtime.get(role.id) ?? { state: role.state, error: null, lastActivityAt: null }, usage: this.store.usage(role.id, this.day()) })),
-      events: this.store.events(roleId), memories: roleId ? this.store.memories(roleId) : [], plans: this.store.plans(roleId), operations: this.store.operations(roleId),
-      extensions: this.store.extensions(roleId), connections: { mcp: this.ctx.kwLagrange.client.status, events: this.ctx.kwLagrange.events.status }, config: publicConfig(this.config) });
+    const preview = <T>(items: T[]) => items.slice(0, 50).map(item => summary(item, this.config.budgets.panelBodyBytes));
+    const value = { revision: this.store.revision(), version: '0.2.0', maintenance: this.maintenance, started: this.started, startupError: this.startupError,
+      roles: preview(this.store.roles().sort((a, b) => Number(b.id === roleId) - Number(a.id === roleId)).map(role => ({ ...role, runtime: this.runtime.get(role.id) ?? { state: role.state, error: null, lastActivityAt: null }, usage: this.store.usage(role.id, this.day()) }))),
+      activities: preview(this.store.list('activity', activitySchema, roleId, 50)), events: preview(this.store.events(roleId, 50).map(event => ({ ...event, delivery: this.store.deliveryStatus(event.id) }))), memories: preview(roleId ? this.store.memories(roleId, 50) : []), plans: preview(this.store.plans(roleId)), operations: preview(this.store.operations(roleId, 50)),
+      extensions: preview(this.store.extensions(roleId)), connections: { mcp: this.ctx.kwLagrange.client.status, events: this.ctx.kwLagrange.events.status }, config: publicConfig(this.config), truncated: false };
+    const lists: unknown[][] = [value.roles, value.activities, value.events, value.memories, value.plans, value.operations, value.extensions];
+    while (Buffer.byteLength(JSON.stringify(value)) > this.config.budgets.snapshotBytes) {
+      const largest = [...lists].sort((a, b) => Buffer.byteLength(JSON.stringify(b)) - Buffer.byteLength(JSON.stringify(a)))[0]!;
+      if (!largest.length) throw new Error('Panel 必需状态超过快照容量'); largest.pop(); value.truncated = true;
+    }
+    return asJson(value);
   }
   close(): Promise<void> { this.closeTask ??= this.stop(); return this.closeTask; }
   private async stop(): Promise<void> {
     this.closing = true;
     await this.operations.close();
     await this.quiesce();
-    for (const [roleId, handle] of this.handles) this.store.recoverDeliveries(roleId, handle.agent.session.snapshotEvents().flatMap(event => event.type === 'user/message' ? [event.data.id] : []));
+    for (const [roleId] of this.handles) this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId) ?? []]);
     await Promise.all([...this.handles.values()].map(handle => handle.dispose()));
     await Promise.allSettled([...this.pendingTasks]);
     await this.extensions.close();
@@ -340,7 +386,7 @@ export class Life extends Service {
 }
 
 export const name = 'kw-life';
-export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'tools', 'systemPrompt', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'appReady', 'appExit'];
+export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'appReady', 'appExit'];
 export async function apply(ctx: Context): Promise<void> {
   const life = new Life(ctx);
   ctx.kwMind.beforeClose(() => life.close());
@@ -348,15 +394,22 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.on('llm/stream', async function* (options, next) {
     const role = life.store.roles().find(role => role.sessionId === options.sessionId);
     if (role && isAgentLoopRequest(options)) { const reason = life.admission(role.id); if (reason) throw new Error(`角色活动已经停止：${reason}`); }
+    if (role) {
+      const resolved = await ctx.llm.resolveModelInfo(options.provider, options.model, options.signal);
+      const estimated = (options.system ? tokens(options.system) : 0) + options.messages.reduce((sum, message) => sum + ('id' in message && message.id ? estimateMessage(message) : ROLE_OVERHEAD + estimateContent(message.content)), 0) + estimateToolsTokens({ config: { provider: options.provider, model: options.model }, tools: options.tools });
+      if (resolved.context && estimated + (options.maxTokens ?? resolved.defaultMaxTokens ?? 0) > resolved.context.contextWindow) throw new Error(`实际装配内容超过模型容量：输入估算 ${estimated} Token，模型容量 ${resolved.context.contextWindow} Token`);
+      const agent = life.handles.get(role.id)?.agent;
+      if (agent && isAgentLoopRequest(options)) appendPluginRecord(agent.session, 'plugin:kwagent/context', { kind: 'request-budget', estimatedTokens: estimated, contextWindow: resolved.context?.contextWindow ?? null });
+    }
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: life.config.timeZone }).format(new Date());
-    let tokens = 0;
+    let usedTokens = 0;
     if (role) life.store.addUsage(role.id, day, 0);
     try {
       for await (const chunk of next()) {
-        if (chunk.type === 'usage') tokens = chunk.usage.totalTokens ?? (chunk.usage.inputTokens ?? 0) + (chunk.usage.outputTokens ?? 0);
+        if (chunk.type === 'usage') usedTokens = chunk.usage.totalTokens ?? (chunk.usage.inputTokens ?? 0) + (chunk.usage.outputTokens ?? 0);
         yield chunk;
       }
-    } finally { if (role) life.store.addUsage(role.id, day, tokens, 0); }
+    } finally { if (role) life.store.addUsage(role.id, day, usedTokens, 0); }
   });
   const listener = (event: Experience) => life.receive(event);
   const lagrange = ctx.kwLagrange;

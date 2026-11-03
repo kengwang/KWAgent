@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const name = 'kwagent-verification-observer';
 export const inject = ['tools'];
@@ -18,6 +19,7 @@ export async function apply(ctx) {
     execute: async args => {
       if (!args || !['initialize', 'timer', 'manual'].includes(args.stage) || typeof args.text !== 'string') throw new Error('观察参数无效');
       await record(args);
+      if (args.stage === 'initialize') await delay(3000);
       return { recorded: true };
     },
   });

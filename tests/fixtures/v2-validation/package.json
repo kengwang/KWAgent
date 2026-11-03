@@ -1,0 +1,7 @@
+{
+  "name": "kwagent-v2-validation",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "index.js",
+  "engines": { "dsh": "0.2.2-alpha.2" }
+}

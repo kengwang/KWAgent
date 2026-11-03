@@ -203,6 +203,11 @@ export class Store {
     this.transaction(() => { for (const id of ids) this.db.prepare('INSERT INTO event_delivery VALUES(?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET message_id=excluded.message_id,state=excluded.state,updated_at=excluded.updated_at').run(id, messageId, state, now()); this.touch(); });
   }
   hasDelivery(messageId: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM event_delivery WHERE message_id=? AND state!='prepared' LIMIT 1").get(messageId)); }
+  deliveryStatus(id: string): { messageId: string | null; state: string } {
+    const row = this.db.prepare('SELECT d.message_id,d.state,e.activity_id,e.self FROM events e LEFT JOIN event_delivery d ON d.event_id=e.id WHERE e.id=?').get(id);
+    if (!row) throw new Error('经历不存在');
+    return { messageId: row.message_id ? String(row.message_id) : null, state: row.state === 'completed' ? 'completed' : row.activity_id ? 'accepted' : row.state === 'delivered' ? 'queued' : row.state === 'prepared' ? 'prepared' : row.self ? 'observed' : 'pending' };
+  }
   completeDelivered(roleId: string, accepted: string[]): void { this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted)); this.touch(); }
   recoverDeliveries(roleId: string, accepted: string[]): void {
     this.db.prepare("UPDATE event_delivery SET state='prepared',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state!='prepared' AND message_id NOT LIKE 'filtered:%' AND message_id NOT IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted));
@@ -243,6 +248,7 @@ export class Store {
       const id = input.id ?? randomUUID();
       const previous = this.get('memory', id, memorySchema);
       if (previous && previous.roleId !== input.roleId) throw new Error('记忆归属不能通过修订修改');
+      if (input.people.some(identity => !/^[1-9][0-9]*$/.test(identity) && !previous?.people.includes(identity))) throw new Error('人物必须使用实际账号标识，昵称请保存到 aliases');
       this.validateSources(input.roleId, input.sources);
       const memory = memorySchema.parse({ ...input, id, revision: expectedRevision === null ? 1 : expectedRevision + 1, createdAt: previous?.createdAt ?? now(), updatedAt: now() });
       this.put('memory', id, input.roleId, asJson(memory), expectedRevision, actor, reason);
@@ -326,8 +332,8 @@ export class Store {
   plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new Error('计划不存在'); return plan; }
   savePlan(plan: LifePlan, expected: number | null, actor: string): void { this.put('plan', plan.id, plan.roleId, asJson(planSchema.parse(plan)), expected, actor, '修改目标或安排'); }
   operations(roleId?: string, limit = 100): Operation[] { return this.list('operation', operationSchema, roleId, limit); }
-  startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId: string; rootCallId: string }): Operation {
-    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null, callId: correlation?.callId ?? null, rootCallId: correlation?.rootCallId ?? null };
+  startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId: string; rootCallId: string; executionId?: string }): Operation {
+    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null, callId: correlation?.callId ?? null, rootCallId: correlation?.rootCallId ?? null, executionId: correlation?.executionId ?? null };
     this.put('operation', operation.id, roleId, asJson(operation), null, roleId ?? 'system', '开始工具调用');
     return operation;
   }

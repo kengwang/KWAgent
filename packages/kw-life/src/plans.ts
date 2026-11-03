@@ -23,6 +23,7 @@ export const planRequestSchema = z.object({
   expectedRevision: z.number().int().positive().optional(), kind: z.enum(['goal', 'condition', 'time']).optional(),
   title: z.string().min(1).max(120).optional(), instruction: z.string().min(1).optional(),
   timing: timingSchema.optional(), condition: planSchema.shape.condition.optional(),
+  context: planSchema.shape.context.optional(), sources: z.array(z.string()).optional(),
 });
 export type PlanRequest = z.infer<typeof planRequestSchema>;
 export const noticeSchema = z.object({ prompt: z.string(), occurrence: z.string() });
@@ -57,11 +58,13 @@ export class Plans {
       title: input.title ?? previous?.title, instruction: input.instruction ?? previous?.instruction,
       condition: kind === 'condition' ? input.condition === undefined ? previous?.condition ?? null : input.condition : null,
       timing: kind === 'time' ? timing : null,
+      context: input.context === undefined ? previous?.context ?? null : input.context, sources: input.sources ?? previous?.sources ?? [],
       scheduleId: previous?.scheduleId ?? null, status: input.action === 'cancel' ? 'cancelled' : input.action === 'complete' ? 'completed' : 'pending',
       revision: (previous?.revision ?? 0) + 1, error: null, createdAt: previous?.createdAt ?? stamp, updatedAt: stamp,
     });
     if (plan.kind === 'time' && !plan.timing) throw new Error('时间事项需要 timing');
     if (plan.kind === 'condition' && !plan.condition) throw new Error('条件事项需要 condition');
+    if (plan.sources.length) this.store.validateSources(roleId, plan.sources);
     this.store.savePlan(plan, previous?.revision ?? null, roleId);
     await this.reconcile(roleId);
     return this.store.plan(plan.id);
@@ -94,7 +97,7 @@ export class Plans {
       const valid = matching.length === 1 && this.decodePrompt(matching[0]!)?.revision === plan.revision;
       if (valid) continue;
       const selector = timingSchema.parse(plan.timing);
-      const request: ScheduleCreateRequest = { title: plan.title, prompt: `KWAGENT_PLAN\n${JSON.stringify({ planId: plan.id, revision: plan.revision + 1, instruction: plan.instruction })}` };
+      const request: ScheduleCreateRequest = { title: plan.title, prompt: `KWAGENT_PLAN\n${JSON.stringify({ planId: plan.id, revision: plan.revision + 1, instruction: plan.instruction, context: plan.context, sources: plan.sources })}` };
       if (selector.kind === 'rrule') {
         const next = rrule.rrulestr(selector.rrule).after(new Date());
         if (!next) { this.store.savePlan({ ...plan, status: 'completed', revision: plan.revision + 1, updatedAt: now() }, plan.revision, 'system'); continue; }

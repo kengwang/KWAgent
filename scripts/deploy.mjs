@@ -8,8 +8,8 @@ const run = (command, args, capture = false) => {
   if (result.status !== 0) throw new Error(`${command} 执行失败`);
   return capture ? result.stdout.trim() : '';
 };
-if (run('git', ['status', '--porcelain'], true)) throw new Error('部署需要干净的 Git 工作目录');
-const image = process.env.KW_IMAGE ?? 'kwagent:0.1.0';
+if (run('git', ['status', '--porcelain', '--untracked-files=no'], true)) throw new Error('部署需要所有受版本管理的修改已经提交');
+const image = process.env.KW_IMAGE ?? 'kwagent:0.2.0';
 const inspect = JSON.parse(run('docker', ['image', 'inspect', image], true))[0];
 const commit = run('git', ['rev-parse', 'HEAD'], true);
 if (inspect.Config.Labels['org.opencontainers.image.revision'] !== commit) throw new Error('镜像与当前提交不一致');

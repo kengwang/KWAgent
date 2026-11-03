@@ -11,6 +11,8 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 
 工具名称以 `mcp__lagrange__` 开头；查询实际工具目录取得准确名称和参数。发送群消息使用 `send_group_message`，好友私聊使用 `send_private_message`，临时会话使用对应临时消息工具。
 
+使用 `capability_read` 查询统一能力目录。`name` 指定工具，`detail=true` 读取真实 Schema；默认每页五十项，通过 `nextCursor` 继续。目录分别列出远端声明、接入支持和当前账号最近调用证据。一次失败只说明该次结果。`message.markdown` 的接入状态固定为不支持。工具说明、此 Skill 与 Panel 使用同一份接入策略。
+
 群聊号、联系人号、引用消息序号从当前事件或真实查询中取得。事件的 `peerId` 表示会话对象，`senderId` 表示发言者。群号和联系人号需要放进各自工具的正确字段。
 
 发送前按需要阅读：
@@ -30,6 +32,8 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 不支持 Markdown 消息发送，包括群聊、私聊、临时会话及合并转发中的 `markdown` 片段。使用 `text` 片段发送普通文字。远程 Schema 中出现 `markdown` 也不能作为可用发送能力。
 
 当前输入中收到的媒体片段包含 `resource_id` 或 `temp_url`，发送片段需要有效的 `uri`。按媒体参考转换后使用。
+
+感知中的图片、语音、视频只提供已知附件信息。需要理解时主动使用 `media_inspect`；附件尚未登记时先通过 `media_prepare` 使用真实 `resourceId`。未读取的引用、转发及附件会标记读取入口。大型内容返回 `payloadId`、预览及来源，使用 `payload_read` 的 `id` 和 `nextCursor` 分页读取。人格中的表达示例用于风格，不代表发生过的事情。
 
 ## 工具结果
 

@@ -20,6 +20,11 @@ export function fitBytes(text: string, bytes: number): string {
 export function readable(value: Json, key = ''): Json {
   if (typeof value === 'string') {
     if (/^(data:.*;base64,|base64:\/\/)/i.test(value) || /^(base64|bytes|audio_data|video_data|image_data)$/i.test(key) || (key === 'data' && value.length > 512 && /^[A-Za-z0-9+/=\r\n]+$/.test(value))) return { encoding: 'binary', characters: value.length, state: '未读取字节内容' };
+    if (key === 'text' && /^\s*[\[{]/.test(value)) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(value); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+      if (parsed && typeof parsed === 'object') return readable(parsed as Json);
+    }
     return value;
   }
   if (Array.isArray(value)) return value.map(item => readable(item));

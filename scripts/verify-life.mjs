@@ -47,6 +47,8 @@ assert.equal(extension.state, 'installed');
 await call('extension', { roleId: id, request: { action: 'enable', id: 'observer' } });
 try {
   await call('role.control', { id, state: 'active' });
+  await until(async () => (await observations()).some(row => row.stage === 'initialize'), '初始化工具进入实际执行');
+  await call('event', { roleId: id, text: '活动运行期间到达的人工观察：窗边出现一片新的叶子。使用 stage=manual 记录。' });
   await until(async state => (await observations()).some(row => row.stage === 'timer') && state.roles.find(role => role.id === id).runtime.state === 'waiting', '自主创建事项并再次唤醒');
   await call('role.control', { id, state: 'paused' });
   const before = (await observations()).filter(row => row.stage === 'manual').length;
@@ -54,10 +56,15 @@ try {
   await delay(1500);
   assert.equal((await observations()).filter(row => row.stage === 'manual').length, before);
   await call('role.control', { id, state: 'active' });
-  await until(async state => (await observations()).some(row => row.stage === 'manual') && state.roles.find(role => role.id === id).runtime.state === 'waiting', '恢复后处理积累事件');
+  await until(async state => (await observations()).filter(row => row.stage === 'manual').length > before && state.roles.find(role => role.id === id).runtime.state === 'waiting', '恢复后处理积累事件');
   const state = await call('status', { roleId: id });
   assert.ok(state.memories.length > 0);
   assert.ok(state.plans.some(plan => plan.kind === 'time' && plan.status === 'completed'));
+  const activities = await call('activity.list', { roleId: id, limit: 200 });
+  const associations = await Promise.all(activities.items.map(activity => call('activity.read', { roleId: id, id: activity.id, limit: 200 })));
+  assert.ok(associations.some(activity => activity.items.filter(link => link.kind === 'perception').length >= 2), '运行中的同一活动需要接纳后续感知');
+  assert.ok(associations.some(activity => activity.items.some(link => link.kind === 'tool' && link.detail.rootCallId)));
+  assert.ok(associations.some(activity => activity.items.some(link => link.kind === 'context' && link.detail.payloadId)));
   await call('role.control', { id, state: 'paused' });
   const compacted = await call('role.compact', { id });
   assert.ok(compacted, '需要实际发生上下文压缩');
@@ -69,7 +76,7 @@ try {
   assert.ok(records.filter(row => row.lifecycle === 'mounted').length >= 2);
   assert.ok(records.filter(row => row.lifecycle === 'disposed').length >= 2);
   assert.equal(records.filter(row => row.stage === 'timer').length, 1);
-  const result = { roleId: id, stages: records.filter(row => row.stage).map(row => row.stage), memories: state.memories.length, schedules: state.plans.map(plan => plan.status), extension: extension.state, pauseResume: true, compacted: true, recalledAfterCompaction: recalled.length };
+  const result = { roleId: id, stages: records.filter(row => row.stage).map(row => row.stage), memories: state.memories.length, schedules: state.plans.map(plan => plan.status), extension: extension.state, pauseResume: true, compacted: true, recalledAfterCompaction: recalled.length, activities: activities.items.length, runningInputAccepted: true, frozenContextReferences: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/life.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));

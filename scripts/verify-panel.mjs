@@ -1,4 +1,4 @@
-import { chromium } from '@playwright/test';
+import { chromium, expect } from '@playwright/test';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
@@ -32,7 +32,7 @@ try {
   await page.getByRole('button', { name: `${name} 未启用`, exact: true }).click();
   await page.getByRole('heading', { name, exact: true }).waitFor();
   await page.getByRole('button', { name: '角色', exact: true }).click();
-  await page.getByText('阅读资料、观察自己的经历。当前配置用于本地管理界面验证。', { exact: true }).waitFor();
+  await page.getByText('阅读资料、观察自己的经历。当前配置用于本地管理界面验证。', { exact: true }).first().waitFor();
   await page.getByRole('button', { name: '编辑角色', exact: true }).click();
   await page.getByRole('textbox', { name: '人格', exact: true }).fill('保留正在编辑的人格。');
   const current = admin('status', { roleId: id }).roles.find(role => role.id === id);
@@ -42,7 +42,7 @@ try {
   await page.getByRole('button', { name: '保存角色', exact: true }).click();
   await page.getByText('内容已经更新，请读取当前版本后重新提交', { exact: true }).waitFor();
   await page.getByRole('button', { name: '读取当前版本', exact: true }).click();
-  assert.equal(await page.getByRole('textbox', { name: '人格', exact: true }).inputValue(), '管理接口提交的新人格。');
+  await expect(page.getByRole('textbox', { name: '人格', exact: true })).toHaveValue('管理接口提交的新人格。');
   await page.getByRole('button', { name: '保存角色', exact: true }).click();
   await page.getByRole('button', { name: '编辑角色', exact: true }).waitFor();
   const memory = admin('memory.revise', { memory: { roleId: id, kind: 'focus', title: '界面检索记忆', content: '管理界面保存了这条验收记录。', realm: 'real', epistemic: 'observed', people: [], aliases: [], sources: [`role:${id}`], archived: false, attention: 0.5 }, expectedRevision: null, reason: '验证记忆编辑' });
@@ -65,6 +65,17 @@ try {
   await page.getByRole('heading', { name: '阅读记录', exact: true }).waitFor();
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByText('持续目标 · 已取消', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '能力', exact: true }).click();
+  await page.getByText('Markdown 发送不支持。调用证据记录各次结果与时间。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '读取 Schema 与证据', exact: true }).first().click();
+  await page.locator('.kw-detail').getByText('inputSchema', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '记忆', exact: true }).click();
+  await article.getByRole('button', { name: '全部来源', exact: true }).click();
+  await page.locator('.kw-detail').getByRole('button', { name: '阅读关联', exact: true }).click();
+  await page.locator('.kw-detail').getByRole('button', { name: '读取完整负载', exact: true }).click();
+  await page.locator('.kw-detail pre').nth(1).waitFor();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
   await mkdir('.artifacts/browser', { recursive: true });
   await page.screenshot({ path: '.artifacts/browser/desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

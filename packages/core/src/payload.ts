@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { isUtf8 } from 'node:buffer';
 import { z } from 'zod';
 import type { Store } from './store.ts';
-import { now, type Json } from './types.ts';
+import { now, asJson, type Json } from './types.ts';
 import { fitText, readable, tokens } from './budget.ts';
 
 export const payloadReadSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(4).max(65536).default(4096) }).strict();
@@ -14,7 +14,14 @@ export interface PayloadRef { payloadId: string; bytes: number; mime: string; so
 export class Payloads {
   constructor(readonly store: Store, readonly directory: string) {}
   private path(id: string): string { return join(this.directory, id.slice(0, 2), id); }
+  async value(roleId: string, id: string, signal?: AbortSignal): Promise<Json> {
+    if (!/^[a-f0-9]{64}$/.test(id) || !this.store.db.prepare('SELECT 1 FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(id, roleId)) throw new Error('负载不存在或属于其他角色');
+    const bytes = await readFile(this.path(id), { signal });
+    if (createHash('sha256').update(bytes).digest('hex') !== id) throw new Error('负载校验和不一致');
+    return asJson(JSON.parse(bytes.toString('utf8')));
+  }
   async put(roleId: string, source: string, value: Json, signal?: AbortSignal): Promise<PayloadRef> {
+    try {
     this.store.role(roleId); signal?.throwIfAborted();
     const body = JSON.stringify(value); const bytes = Buffer.byteLength(body); const id = createHash('sha256').update(body).digest('hex');
     const path = this.path(id); await mkdir(join(this.directory, id.slice(0, 2)), { recursive: true, mode: 0o700 });
@@ -26,9 +33,11 @@ export class Payloads {
       if (createHash('sha256').update(await readFile(path)).digest('hex') !== id) throw error;
       await unlink(temporary);
     }
+    if (process.platform !== 'win32') { const directory = await open(dirname(path), 'r'); try { await directory.sync(); } finally { await directory.close(); } }
     signal?.throwIfAborted();
     this.store.db.prepare('INSERT OR IGNORE INTO payloads VALUES(?,?,?,?,?,?)').run(id, roleId, bytes, 'application/json', source, now());
     return { payloadId: id, bytes, mime: 'application/json', source };
+    } catch (error) { if (!signal?.aborted) this.store.changes.emit('payload-error', roleId, error); throw error; }
   }
   async view(roleId: string, source: string, value: Json, budget: number, signal?: AbortSignal): Promise<Json> {
     const cleaned = readable(value); const text = JSON.stringify(cleaned);
@@ -36,7 +45,9 @@ export class Payloads {
     const ref = await this.put(roleId, source, value, signal);
     const overhead = tokens(JSON.stringify({ ...ref, preview: '', truncated: true, read: 'payload_read' })) + 32;
     if (overhead >= budget) throw new Error('负载预览预算不足以容纳读取引用');
-    return { ...ref, preview: fitText(text, budget - overhead), truncated: true, read: 'payload_read' };
+    let preview = fitText(text, budget - overhead);
+    while (tokens(JSON.stringify({ ...ref, preview, truncated: true, read: 'payload_read' })) > budget) preview = fitText(preview, Math.max(0, tokens(preview) - Math.max(16, Math.ceil(tokens(preview) / 10))));
+    return { ...ref, preview, truncated: true, read: 'payload_read' };
   }
   async read(roleId: string, input: z.input<typeof payloadReadSchema>, signal?: AbortSignal): Promise<Json> {
     const query = payloadReadSchema.parse(input); signal?.throwIfAborted();
