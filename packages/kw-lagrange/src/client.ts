@@ -116,7 +116,8 @@ export class MilkyClient {
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;
     const intent = roleId && this.payloads ? await this.payloads.view(roleId, `intent:${correlation?.callId ?? name}`, asJson(args), this.previewTokens, signal) : asJson(args);
-    const operation = write ? this.store.startOperation(this.accountId, roleId, name, intent, correlation) : undefined;
+    const context = typeof args.group_id === 'number' ? { scene: 'group' as const, peerId: args.group_id } : typeof args.user_id === 'number' ? { scene: 'private' as const, peerId: args.user_id } : null;
+    const operation = write ? this.store.startOperation(this.accountId, roleId, name, intent, { ...correlation, context }) : undefined;
     const run = async () => {
       let dispatched = false;
       try {

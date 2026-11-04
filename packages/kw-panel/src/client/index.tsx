@@ -14,6 +14,7 @@ import contribution from '@kwagent/kw-panel/remote';
 import styles from './style.css?inline';
 import { RoleForm, PlanForm } from './forms.tsx';
 import { Timeline, EventHistory, People, CapabilityList, DetailReader, PageNotice, useRecords, type Detail } from './views.tsx';
+import { ContinuityView } from './continuity.tsx';
 
 interface Snapshot {
   version: string; truncated: boolean;
@@ -106,7 +107,9 @@ function Panel({ ctx }: { ctx: Context }) {
       {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} busy={busy} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
         {tab === '活动' && <><EventInput roleId={roleId} call={call} /><Timeline roleId={roleId} revision={snapshot.revision} call={call} open={open} /><EventHistory roleId={roleId} revision={snapshot.revision} call={call} open={open} unassigned={setDetail} /></>}
         {tab === '角色' && (role ? <><div className="kw-section-head"><h3>当前人格</h3><Button onClick={() => editRole(role.id)}>编辑角色</Button></div><p className="kw-prose">{role.persona}</p><h3>初始设定</h3><p className="kw-prose">{role.initialPersona}</p><h3>自我状态</h3><p>{role.selfState || '尚未形成当前状态。'}</p><h3>表达示例</h3><p className="kw-muted">仅作为表达风格，不作为真实经历。</p>{role.expressionExamples.map((example, index) => <p className="kw-prose" key={index}>{example}</p>)}<h3>会话归属</h3><p>群聊：{role.globalGroups ? '账号全局共享' : role.groups.join('、') || '尚未绑定'}；私聊：{role.defaultPrivate ? '账号默认角色' : role.contacts.join('、') || '按联系人绑定'}</p><Button onClick={() => open('history', { entity: 'role', id: role.id })}>查看人格修订</Button><Button onClick={() => open('persona.read', { roleId })}>读取完整人格</Button></> : <Empty text="选择或创建一个角色来编辑人格与会话归属。" />)}
-        {tab === '人物' && <People roleId={roleId} revision={snapshot.revision} call={call} open={open} />}
+        {tab === '角色' && <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['life', 'expression', 'reflection']} />}
+        {tab === '人物' && <><People roleId={roleId} revision={snapshot.revision} call={call} open={open} /><ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['relationship', 'thread', 'conversation']} /></>}
+        {tab === '记忆' && <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['journal', 'reflection']} />}
         {['记忆', '世界'].includes(tab) && <>
           <form className="kw-search" onSubmit={event => { event.preventDefault(); if (roleId) void call('memory.recall', { roleId, query, semantic: Boolean(query), ...(scene ? { scene } : {}), ...(peer ? { peerId: Number(peer) } : {}) }).then(result => setFound(result as Memory[])).catch(() => {}); }}>
             <label>检索记忆<input value={query} onChange={event => setQuery(event.target.value)} placeholder="人物、共同经历或正在关注的问题" /></label>
@@ -117,6 +120,7 @@ function Panel({ ctx }: { ctx: Context }) {
           {roleId && !found && !memoryEnd && <Button disabled={busy} onClick={loadMemories}>读取更多认识</Button>}
         </>}
         {tab === '目标与安排' && <>
+          <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['thread', 'conversation']} />
           <PlanForm key={editingPlan ? `${editingPlan.id}:${editingPlan.revision}` : roleId} roleId={roleId} call={call} initial={editingPlan} onDone={() => setEditingPlan(undefined)} />
           <PageNotice page={planPage} />
           {planPage.items.map(plan => <article className="kw-entry" key={plan.id}><h3>{plan.title}</h3><p>{plan.instruction}</p><p>{{ goal: '持续目标', condition: '条件事项', time: '时间安排' }[plan.kind]} · {{ pending: '待安排', active: '进行中', paused: '已暂停', completed: plan.kind === 'time' ? '已投递' : '已完成', cancelled: '已取消', error: '需要处理' }[plan.status]}</p><div className="kw-actions"><Button size="sm" onClick={() => editPlan(plan.id, plan.roleId)}>修改</Button><Button size="sm" onClick={() => open('record.read', { roleId: plan.roleId, kind: 'plan', id: plan.id })}>详情</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'complete', id: plan.id, expectedRevision: plan.revision } })}>完成</Button><Button size="sm" onClick={() => act('plan', { roleId: plan.roleId, request: { action: 'cancel', id: plan.id, expectedRevision: plan.revision } })}>取消</Button></div></article>)}

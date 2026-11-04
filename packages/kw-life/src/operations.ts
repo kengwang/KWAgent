@@ -6,12 +6,13 @@ import { join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check } from 'proper-lockfile';
 import { z } from 'zod';
-import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, redact, SCHEMA_VERSION, summary } from '@kwagent/core';
+import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema } from '@kwagent/core';
 import type { Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { planRequestSchema } from './plans.ts';
 import { extensionRequestSchema } from './extensions.ts';
 import { query, readActions } from './queries.ts';
+import { APP_VERSION } from '@kwagent/core';
 
 export function adminSocket(dataRoot: string): string {
   return process.platform === 'win32' ? String.raw`\\.\pipe\kwagent-${createHash('sha256').update(resolve(dataRoot)).digest('hex').slice(0, 16)}` : join(dataRoot, 'run', 'admin.sock');
@@ -58,6 +59,7 @@ export class Operations {
         return asJson(await life.control(input.id, input.state));
       }
       case 'event': { const input = z.object({ roleId: z.string(), text: z.string().min(1) }).parse(value); return asJson(life.manual(input.roleId, input.text)); }
+      case 'continuity.revise': { const input = continuityRequestSchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input; const record = life.context.kwMind.continuity.revise(roleId, request, 'owner'); await life.syncContinuity(roleId); return asJson(record); }
       case 'events.transfer': { const input = z.object({ ids: z.array(z.string()).min(1).max(500), targetRoleId: z.string() }).parse(value); life.store.migrateEvents(input.ids, input.targetRoleId); return { transferred: input.ids.length }; }
       case 'self.revise': { const input = z.object({ roleId: z.string(), expectedRevision: z.number().int().positive(), patch: z.object({ persona: z.string().min(1).optional(), selfState: z.string().optional(), expressionExamples: z.array(z.string().min(1)).optional() }).strict(), reason: z.string().min(1), sources: z.array(z.string()).min(1) }).strict().parse(value); return asJson(life.context.kwMind.selfRevise(input.roleId, input, 'owner')); }
       case 'memory.recall': return asJson((await life.context.kwMind.recall(recallSchema.parse(value))).map(memory => summary(memory, life.config.budgets.panelBodyBytes)));
@@ -150,7 +152,7 @@ export class Operations {
         if (await exists(source)) await cp(source, join(directory, name), { recursive: true, dereference: false, filter: path => !path.endsWith('.lock') && !path.includes(`${sep}node_modules${sep}.cache`) });
       }
       const files = await checksums(directory);
-      const manifest = { version: 1, createdAt: now(), appVersion: '0.2.0', harnessVersion: '0.2.2-alpha.2', schema: SCHEMA_VERSION, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_IMAGE ?? null, files };
+      const manifest = { version: 1, createdAt: now(), appVersion: APP_VERSION, harnessVersion: '0.2.2-alpha.2', schema: SCHEMA_VERSION, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_IMAGE ?? null, files };
       await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
       this.life.store.setMeta('last-backup', JSON.stringify({ directory, ...manifest, files: files.length }));
       const cutoff = Date.now() - this.life.config.backup.keepDays * 86400000;

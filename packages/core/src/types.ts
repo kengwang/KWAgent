@@ -80,6 +80,7 @@ export const planSchema = z.object({
   condition: z.object({ eventTypes: z.array(z.string()), peerIds: z.array(z.number().int()), text: z.string() }).nullable(),
   timing: jsonSchema.nullable(), scheduleId: z.string().nullable(),
   context: z.object({ scene: z.enum(['group', 'private']), peerId: z.number().int().positive() }).nullable().default(null),
+  purpose: z.enum(['internal', 'review', 'contact']).default('internal'), relatedRecords: z.array(z.string()).default([]),
   sources: z.array(z.string()).default([]),
   status: z.enum(['pending', 'active', 'paused', 'completed', 'cancelled', 'error']),
   revision: z.number().int().positive(), error: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
@@ -91,6 +92,7 @@ export const operationSchema = z.object({
   result: jsonSchema.nullable(), startedAt: z.string(), endedAt: z.string().nullable(),
   callId: z.string().nullable().default(null), rootCallId: z.string().nullable().default(null),
   executionId: z.string().nullable().default(null),
+  context: z.object({ scene: z.enum(['group', 'private']), peerId: z.number().int().positive() }).nullable().default(null),
 });
 export type Operation = z.infer<typeof operationSchema>;
 export const mediaSchema = z.object({
@@ -114,6 +116,7 @@ export class ConflictError extends Error {
 export class CapabilityError extends Error {
   readonly code = 'capability_unavailable';
 }
+export class EvidenceError extends Error {}
 export function now(): string { return new Date().toISOString(); }
 export function asJson(value: unknown): Json { return jsonSchema.parse(value); }
 export function errorText(error: unknown): string {

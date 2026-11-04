@@ -22,7 +22,23 @@ export async function apply(ctx) {
   assert.deepEqual(selected, [notices[0]]);
   assert.deepEqual(await life.plans.filterNotices(roleId, notices, `${roleId}:batch`), selected);
   assert.deepEqual(await life.plans.filterNotices(roleId, notices, `${roleId}:duplicate`), []);
+  const future = life.context.kwMind.continuity.revise(roleId, { expectedRevision: null, data: { kind: 'thread', title: '未来生效', content: '到期重新判断。', sources: [], people: [], context: null, realm: 'real', memories: [], plans: [], relatedRecords: [], applicableAt: new Date(Date.now() + 3600000).toISOString(), expiresAt: null, status: 'active', expectedAt: null, reviewAt: new Date(Date.now() + 7200000).toISOString(), answer: '', followups: [] }, reason: '验证未来适用事项' });
+  await life.syncContinuity(roleId);
+  assert.ok(life.store.plans(roleId).some(plan => plan.relatedRecords.includes(future.id) && plan.status === 'active'));
+  const thread = life.context.kwMind.continuity.revise(roleId, { expectedRevision: null, data: { ...future.data, title: '结束后取消', applicableAt: null, reviewAt: null }, reason: '验证缓存复核' });
+  const review = await life.plans.mutate(roleId, { action: 'create', kind: 'time', title: '关联复核', instruction: '到期判断', purpose: 'review', relatedRecords: [thread.id], timing: { kind: 'after', after_seconds: 3600 } });
+  const reviewTask = (await ctx.schedule.list({ sessionId: life.store.role(roleId).sessionId })).find(task => task.id === review.scheduleId);
+  const reviewNotices = [{ prompt: reviewTask.prompt, occurrence: review.timing.at }];
+  assert.equal((await life.plans.filterNotices(roleId, reviewNotices, `${roleId}:review`)).length, 1);
+  life.context.kwMind.continuity.revise(roleId, { id: thread.id, expectedRevision: thread.revision, data: { ...thread.data, status: 'declined' }, reason: '对方明确拒绝' });
+  assert.deepEqual(await life.plans.filterNotices(roleId, reviewNotices, `${roleId}:review`), []);
+  const updated = await life.plans.mutate(roleId, { action: 'create', kind: 'time', title: '内容修订', instruction: '原内容', timing: { kind: 'after', after_seconds: 3600 } });
+  const updatedTask = (await ctx.schedule.list({ sessionId: life.store.role(roleId).sessionId })).find(task => task.id === updated.scheduleId);
+  const updateNotices = [{ prompt: updatedTask.prompt, occurrence: updated.timing.at }];
+  assert.equal((await life.plans.filterNotices(roleId, updateNotices, `${roleId}:updated`)).length, 1);
+  const current = life.store.plan(updated.id); await life.plans.mutate(roleId, { action: 'update', id: updated.id, expectedRevision: current.revision, instruction: '修订后的内容', timing: { kind: 'after', after_seconds: 7200 } });
+  assert.deepEqual(await life.plans.filterNotices(roleId, updateNotices, `${roleId}:updated`), []);
   const directory = join(process.env.KW_DATA_ROOT, 'workspaces', roleId);
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, 'plan-validation.json'), JSON.stringify({ selected: selected.length, invalidFiltered: true, duplicateFiltered: true, stableReplay: true }));
+  await writeFile(join(directory, 'plan-validation.json'), JSON.stringify({ selected: selected.length, invalidFiltered: true, duplicateFiltered: true, stableReplay: true, futureReviewPreserved: true, closedThreadReplayRejected: true, revisedPlanReplayRejected: true }));
 }

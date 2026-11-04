@@ -10,7 +10,7 @@ import {
 } from './types.ts';
 import type { EventInput, Experience, Extension, Json, LifePlan, Media, Memory, MemoryInput, Operation, Recall, Revision, Role, RoleInput } from './types.ts';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 type Row = Record<string, unknown>;
 function decode<T>(row: Row | undefined, schema: z.ZodType<T>): T | undefined {
   if (!row) return undefined;
@@ -42,6 +42,16 @@ export class Store {
       CREATE INDEX activity_targets ON activity_links(kind,target_id);
       CREATE TABLE consolidation_chunks(event_id TEXT NOT NULL REFERENCES events(id),part INTEGER NOT NULL,total INTEGER NOT NULL,digest TEXT NOT NULL,completed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(event_id,part));
       PRAGMA user_version=2;
+      COMMIT;
+    `);
+    if (version === 2) this.db.prepare('VACUUM INTO ?').run(`${path}.schema2-${Date.now()}-${randomUUID()}.sqlite`);
+    if (version < 3) this.db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE IF NOT EXISTS continuity_sources(record_id TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(record_id,source_id));
+      CREATE INDEX IF NOT EXISTS continuity_source_lookup ON continuity_sources(source_id,record_id);
+      CREATE INDEX IF NOT EXISTS continuity_kind ON documents(role_id,json_extract(body,'$.data.kind'),updated_at,id) WHERE kind='continuity';
+      CREATE INDEX IF NOT EXISTS continuity_scene ON documents(role_id,json_extract(body,'$.data.context.scene'),json_extract(body,'$.data.context.peerId')) WHERE kind='continuity';
+      PRAGMA user_version=3;
       COMMIT;
     `);
   }
@@ -222,7 +232,7 @@ export class Store {
     this.transaction(() => {
       for (const id of ids) {
         const event = this.event(id);
-        if (event.activityId || this.db.prepare('SELECT 1 FROM event_delivery WHERE event_id=?').get(id) || this.db.prepare('SELECT 1 FROM memory_sources WHERE source_id=?').get(id)) throw new Error('已经进入活动或认识依据的经历需要保留原始归属；可以向目标角色提供引用');
+        if (event.activityId || this.db.prepare('SELECT 1 FROM event_delivery WHERE event_id=?').get(id) || this.db.prepare('SELECT 1 FROM memory_sources WHERE source_id=?').get(id) || this.db.prepare('SELECT 1 FROM continuity_sources WHERE source_id=?').get(id)) throw new Error('已经进入活动或认识依据的经历需要保留原始归属；可以向目标角色提供引用');
         this.db.prepare('UPDATE events SET role_id=? WHERE id=?').run(targetRoleId, id);
         this.appendEvent({ accountId: event.accountId, roleId: targetRoleId, source: 'system', type: 'experience-transfer', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ eventId: id, from: event.roleId, to: targetRoleId }) });
       }
@@ -334,8 +344,10 @@ export class Store {
   plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new Error('计划不存在'); return plan; }
   savePlan(plan: LifePlan, expected: number | null, actor: string): void { this.put('plan', plan.id, plan.roleId, asJson(planSchema.parse(plan)), expected, actor, '修改目标或安排'); }
   operations(roleId?: string, limit = 100): Operation[] { return this.list('operation', operationSchema, roleId, limit); }
-  startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId: string; rootCallId: string; executionId?: string }): Operation {
-    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null, callId: correlation?.callId ?? null, rootCallId: correlation?.rootCallId ?? null, executionId: correlation?.executionId ?? null };
+  startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId?: string; rootCallId?: string; executionId?: string; context?: Operation['context'] }): Operation {
+    const raw = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const context = correlation?.context ?? (typeof raw.group_id === 'number' ? { scene: 'group' as const, peerId: raw.group_id } : typeof raw.user_id === 'number' ? { scene: 'private' as const, peerId: raw.user_id } : null);
+    const operation: Operation = { id: randomUUID(), accountId, roleId, tool, arguments: args, state: 'started', result: null, startedAt: now(), endedAt: null, callId: correlation?.callId ?? null, rootCallId: correlation?.rootCallId ?? null, executionId: correlation?.executionId ?? null, context };
     this.put('operation', operation.id, roleId, asJson(operation), null, roleId ?? 'system', '开始工具调用');
     return operation;
   }

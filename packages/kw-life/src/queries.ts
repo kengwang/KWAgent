@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import { continuityQuerySchema } from '@kwagent/core';
 import { asJson, jsonSchema, operationSchema, planSchema, roleSchema, extensionSchema, pageSchemaFields, payloadReadSchema, summary, type Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { activitySchema } from './activities.ts';
 import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 
 export const readActions = new Set(['status', 'doctor', 'history', 'revision.read', 'events', 'memory.list', 'source.read', 'payload.read', 'payload.links', 'role.read', 'persona.read', 'activity.list', 'activity.read', 'sources.list', 'people.list', 'people.memories', 'capability.read', 'memory.read', 'memory.detail', 'records.list', 'perception.read', 'record.read', 'record.detail', 'session.read', 'session.records']);
+
+for (const action of ['continuity.list', 'continuity.read']) readActions.add(action);
 
 /** 管理查询统一校验分页并只返回列表摘要，正文读取独立执行。 */
 export async function query(life: Life, action: string, value: Json): Promise<Json | undefined> {
@@ -13,9 +16,19 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
     const ref = await life.context.kwMind.payloads.put(roleId, id, record);
     const body = record && typeof record === 'object' && !Array.isArray(record) ? record : {};
     const refs = life.context.kwMind.payloads.references(roleId, record);
-    return { roleId, id, ...ref, read: 'payload.read', summary: asJson(summary(record, life.config.budgets.panelBodyBytes)), sources: Array.isArray(body.sources) ? body.sources.slice(0, 50) : Array.isArray(body.personaSources) ? body.personaSources.slice(0, 50) : [], references: asJson(refs.slice(0, 50)), referencesNextCursor: refs.length > 50 ? 50 : null };
+    const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {};
+    return { roleId, id, ...ref, read: 'payload.read', summary: asJson(summary(record, life.config.budgets.panelBodyBytes)), sources: Array.isArray(body.sources) ? body.sources.slice(0, 50) : Array.isArray(body.personaSources) ? body.personaSources.slice(0, 50) : Array.isArray(data.sources) ? data.sources.slice(0, 50) : [], references: asJson(refs.slice(0, 50)), referencesNextCursor: refs.length > 50 ? 50 : null };
   };
   switch (action) {
+    case 'continuity.list': {
+      const input = continuityQuerySchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input;
+      const page = life.context.kwMind.continuity.list(roleId, request); return asJson({ ...page, items: preview(page.items.map(record => ({ ...record, kind: record.data.kind, title: record.data.title, status: record.data.status, content: record.data.content, people: record.data.people, context: record.data.context, expiresAt: record.data.expiresAt }))) });
+    }
+    case 'continuity.read': {
+      const input = z.object({ roleId: z.string(), id: z.string(), raw: z.boolean().default(false) }).strict().parse(value);
+      const record = life.context.kwMind.continuity.read(input.roleId, input.id);
+      return input.raw ? asJson(record) : { ...await detail(input.roleId, input.id, asJson(record)), receipts: record.data.kind === 'thread' ? record.data.followups.slice(0, 50).map(item => { const operation = life.store.get('operation', item.operationId, operationSchema); return { ...item, state: operation?.state ?? 'unknown', association: !item.pending && operation?.context ? 'confirmed-target' : '待核实或未记录会话关联' }; }) : [] };
+    }
     case 'role.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return asJson(life.store.role(input.roleId)); }
     case 'persona.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return detail(input.roleId, `role:${input.roleId}`, asJson(life.store.role(input.roleId))); }
     case 'events': {
@@ -24,17 +37,19 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
       return asJson({ items: preview(rows.slice(0, input.limit).map(event => ({ ...event, delivery: life.store.deliveryStatus(event.id) }))), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.seq : null });
     }
     case 'history': {
-      const input = z.object({ entity: z.enum(['role', 'memory', 'plan', 'extension', 'operation']), id: z.string(), limit: pageSchemaFields.limit, before: z.number().int().positive().optional() }).strict().parse(value);
+      const input = z.object({ entity: z.enum(['role', 'memory', 'plan', 'extension', 'operation', 'continuity']), id: z.string(), limit: pageSchemaFields.limit, before: z.number().int().positive().optional() }).strict().parse(value);
       const rows = life.store.history(input.entity, input.id, input.limit + 1, input.before);
       return asJson({ items: preview(rows.slice(0, input.limit)), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.revision : null });
     }
     case 'revision.read': {
-      const input = z.object({ roleId: z.string(), entity: z.enum(['role', 'memory', 'plan', 'extension', 'operation']), id: z.string(), revision: z.number().int().positive() }).strict().parse(value);
+      const input = z.object({ roleId: z.string(), entity: z.enum(['role', 'memory', 'plan', 'extension', 'operation', 'continuity']), id: z.string(), revision: z.number().int().positive() }).strict().parse(value);
       const owner = life.store.db.prepare('SELECT role_id FROM documents WHERE kind=? AND id=?').get(input.entity, input.id);
       if (owner?.role_id !== input.roleId) throw new Error('修订不存在或属于其他角色');
       const record = life.store.history(input.entity, input.id, 1, input.revision + 1)[0]; if (record?.revision !== input.revision) throw new Error('修订不存在');
       const body = record.value && typeof record.value === 'object' && !Array.isArray(record.value) ? record.value : {};
-      return { ...await detail(input.roleId, `revision:${input.entity}:${input.id}:${input.revision}`, asJson(record)), sources: body.sources ?? body.personaSources ?? [] };
+      const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {};
+      const sources = body.sources ?? body.personaSources ?? data.sources;
+      return { ...await detail(input.roleId, `revision:${input.entity}:${input.id}:${input.revision}`, asJson(record)), sources: Array.isArray(sources) ? sources.slice(0, 50) : [] };
     }
     case 'memory.list': {
       const input = z.object({ roleId: z.string(), offset: pageSchemaFields.cursor, limit: pageSchemaFields.limit }).strict().parse(value);
@@ -86,7 +101,8 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
       return asJson({ items: preview(rows.slice(0, input.limit)), nextCursor: rows.length > input.limit ? input.cursor + input.limit : null });
     }
     case 'sources.list': {
-      const input = z.object({ roleId: z.string(), memoryId: z.string().optional(), personId: z.string().optional(), ...pageSchemaFields }).strict().refine(item => Boolean(item.memoryId) !== Boolean(item.personId), '需要指定记忆或人物').parse(value);
+      const input = z.object({ roleId: z.string(), memoryId: z.string().optional(), personId: z.string().optional(), continuityId: z.string().optional(), ...pageSchemaFields }).strict().refine(item => [item.memoryId, item.personId, item.continuityId].filter(Boolean).length === 1, '需要指定记忆、人物或连续性记录').parse(value);
+      if (input.continuityId) { const record = life.context.kwMind.continuity.read(input.roleId, input.continuityId); return asJson({ items: record.data.sources.slice(input.cursor, input.cursor + input.limit).map(id => ({ id, roleId: input.roleId })), nextCursor: record.data.sources.length > input.cursor + input.limit ? input.cursor + input.limit : null }); }
       if (input.memoryId) {
         const memory = life.store.memory(input.memoryId); if (memory.roleId !== input.roleId) throw new Error('认识属于其他角色');
         return asJson({ items: memory.sources.slice(input.cursor, input.cursor + input.limit).map(id => ({ id, roleId: input.roleId })), nextCursor: memory.sources.length > input.cursor + input.limit ? input.cursor + input.limit : null });

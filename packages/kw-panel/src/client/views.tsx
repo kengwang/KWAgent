@@ -5,7 +5,7 @@ import { appendPage, type Page } from './paging.ts';
 
 export type Call = (action: string, payload?: unknown) => Promise<unknown>;
 export type Open = (action: string, payload: Record<string, unknown>) => void;
-function usePages<T>(action: string, parameters: Record<string, unknown>, key: (item: T) => string, revision: number, call: Call, enabled = true, cursor = 'cursor') {
+export function usePages<T>(action: string, parameters: Record<string, unknown>, key: (item: T) => string, revision: number, call: Call, enabled = true, cursor = 'cursor') {
   const [page, setPage] = useState<Page<T>>({ items: [], nextCursor: null });
   const [frozen, setFrozen] = useState(false); const [generation, setGeneration] = useState(0); const [loadedRevision, setLoadedRevision] = useState(0);
   const selection = JSON.stringify({ action, parameters }); const owner = useRef(selection); owner.current = selection; const epoch = useRef(0);
@@ -50,7 +50,7 @@ export function People({ roleId, revision, call, open }: { roleId: string; revis
     {page.items.map(person => <article className="kw-entry" key={person.identity}>
       <h3>{person.aliases.join('、') || person.identity}</h3><p className="kw-muted">账号 {person.identity} · 昵称和群名片随来源变化</p>
       {person.memories.map(memory => <div key={memory.id}><strong>{memory.title} · {memory.kind === 'relationship' ? '关系' : '认识'}</strong><p className="kw-prose">{memory.content}</p><Button size="sm" onClick={() => open('memory.detail', { roleId, id: memory.id })}>阅读认识与依据</Button></div>)}
-      <div className="kw-actions"><Button size="sm" onClick={() => open('people.memories', { roleId, personId: person.identity })}>查阅全部认识与关系</Button><Button size="sm" onClick={() => open('sources.list', { roleId, personId: person.identity })}>查阅共同经历</Button>{person.profiles.slice(0, 3).map(profile => <Button key={profile.sourceId} size="sm" onClick={() => open('source.read', { roleId, id: profile.sourceId })}>别名来源：{profile.aliases.join('、') || '账号身份'}</Button>)}</div>
+      <div className="kw-actions"><Button size="sm" onClick={() => open('people.memories', { roleId, personId: person.identity })}>查阅全部认识与关系</Button><Button size="sm" onClick={() => open('continuity.list', { roleId, person: person.identity })}>相处方式与话头</Button><Button size="sm" onClick={() => open('sources.list', { roleId, personId: person.identity })}>查阅共同经历</Button>{person.profiles.slice(0, 3).map(profile => <Button key={profile.sourceId} size="sm" onClick={() => open('source.read', { roleId, id: profile.sourceId })}>别名来源：{profile.aliases.join('、') || '账号身份'}</Button>)}</div>
     </article>)}
     {page.nextCursor !== null && <Button onClick={page.more}>读取更多人物</Button>}
   </>;
@@ -72,6 +72,7 @@ export function DetailReader({ detail, roleId, call, onOpen }: { detail: Detail;
   const linked = (item: Record<string, any>) => {
     const id = item.id; const info = item.detail ?? {};
     if (item.payloadId) onOpen('payload.read', { roleId, id: item.payloadId });
+    else if (item.kind === 'continuity' || item.data?.kind) onOpen('continuity.read', { roleId, id });
     else if (item.entity && item.revision) onOpen('revision.read', { roleId, entity: item.entity, id, revision: item.revision });
     else if (item.kind === 'source' || item.kind === 'receipt') onOpen('source.read', { roleId, id });
     else if (item.kind === 'operation') onOpen('source.read', { roleId, id: info.id });

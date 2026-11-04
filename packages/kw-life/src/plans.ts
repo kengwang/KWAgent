@@ -5,7 +5,7 @@ import { ScheduleId } from '@deepseek-ai/dsh-schedule';
 import type { ScheduleCreateRequest, ScheduleRecord } from '@deepseek-ai/dsh-schedule';
 import rrule from 'rrule';
 import { z } from 'zod';
-import { asJson, ConflictError, jsonSchema, now, planSchema } from '@kwagent/core';
+import { asJson, ConflictError, jsonSchema, now, planSchema, continuitySchema, continuityActive } from '@kwagent/core';
 import type { Json, LifePlan, Store } from '@kwagent/core';
 
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/);
@@ -24,6 +24,7 @@ export const planRequestSchema = z.object({
   title: z.string().min(1).max(120).optional(), instruction: z.string().min(1).optional(),
   timing: timingSchema.optional(), condition: planSchema.shape.condition.optional(),
   context: planSchema.shape.context.optional(), sources: z.array(z.string()).optional(),
+  purpose: planSchema.shape.purpose.optional(), relatedRecords: planSchema.shape.relatedRecords.optional(),
 });
 export type PlanRequest = z.infer<typeof planRequestSchema>;
 export const noticeSchema = z.object({ prompt: z.string(), occurrence: z.string() });
@@ -59,12 +60,14 @@ export class Plans {
       condition: kind === 'condition' ? input.condition === undefined ? previous?.condition ?? null : input.condition : null,
       timing: kind === 'time' ? timing : null,
       context: input.context === undefined ? previous?.context ?? null : input.context, sources: input.sources ?? previous?.sources ?? [],
+      purpose: input.purpose ?? previous?.purpose ?? 'internal', relatedRecords: input.relatedRecords ?? previous?.relatedRecords ?? [],
       scheduleId: previous?.scheduleId ?? null, status: input.action === 'cancel' ? 'cancelled' : input.action === 'complete' ? 'completed' : 'pending',
       revision: (previous?.revision ?? 0) + 1, error: null, createdAt: previous?.createdAt ?? stamp, updatedAt: stamp,
     });
     if (plan.kind === 'time' && !plan.timing) throw new Error('时间事项需要 timing');
     if (plan.kind === 'condition' && !plan.condition) throw new Error('条件事项需要 condition');
     if (plan.sources.length) this.store.validateSources(roleId, plan.sources);
+    for (const id of plan.relatedRecords) { const record = this.store.get('continuity', id, continuitySchema); if (!record || record.roleId !== roleId) throw new Error('关联连续性记录不存在或属于其他角色'); }
     this.store.savePlan(plan, previous?.revision ?? null, roleId);
     await this.reconcile(roleId);
     return this.store.plan(plan.id);
@@ -79,6 +82,11 @@ export class Plans {
     const sessionId = SessionId(role.sessionId);
     const tasks = await this.schedule.list({ sessionId });
     for (const plan of this.store.plans(roleId)) {
+      if (plan.purpose !== 'internal' && plan.relatedRecords.length && !this.validRelated(roleId, plan.relatedRecords, true)) {
+        for (const task of tasks.filter(task => this.decodePrompt(task)?.planId === plan.id)) await this.schedule.delete({ sessionId, id: task.id });
+        if (!['cancelled', 'completed'].includes(plan.status)) this.store.savePlan({ ...plan, status: 'cancelled', scheduleId: null, revision: plan.revision + 1, updatedAt: now() }, plan.revision, 'system');
+        continue;
+      }
       if (plan.kind !== 'time') {
         for (const task of tasks.filter(task => this.decodePrompt(task)?.planId === plan.id)) await this.schedule.delete({ sessionId, id: task.id });
         if (plan.status === 'pending') this.store.savePlan({ ...plan, status: 'active', scheduleId: null, revision: plan.revision + 1, updatedAt: now() }, plan.revision, roleId);
@@ -97,7 +105,7 @@ export class Plans {
       const valid = matching.length === 1 && this.decodePrompt(matching[0]!)?.revision === plan.revision;
       if (valid) continue;
       const selector = timingSchema.parse(plan.timing);
-      const request: ScheduleCreateRequest = { title: plan.title, prompt: `KWAGENT_PLAN\n${JSON.stringify({ planId: plan.id, revision: plan.revision + 1, instruction: plan.instruction, context: plan.context, sources: plan.sources })}` };
+      const request: ScheduleCreateRequest = { title: plan.title, prompt: `KWAGENT_PLAN\n${JSON.stringify({ planId: plan.id, revision: plan.revision + 1, instruction: plan.instruction, context: plan.context, sources: plan.sources, purpose: plan.purpose, relatedRecords: plan.relatedRecords })}` };
       if (selector.kind === 'rrule') {
         const next = rrule.rrulestr(selector.rrule).after(new Date());
         if (!next) { this.store.savePlan({ ...plan, status: 'completed', revision: plan.revision + 1, updatedAt: now() }, plan.revision, 'system'); continue; }
@@ -119,13 +127,23 @@ export class Plans {
     return this.exclusive(async () => {
       const key = `schedule-input:${roleId}:${inputId}`;
       const saved = this.store.meta(key);
-      if (saved) return z.array(noticeSchema).parse(JSON.parse(saved));
+      const versions = JSON.parse(this.store.meta(`${key}:versions`) ?? '{}') as Record<string, number>;
+      if (saved) return z.array(noticeSchema).parse(JSON.parse(saved)).filter(notice => {
+        if (!notice.prompt.startsWith('KWAGENT_PLAN\n')) return true;
+        const marker = z.object({ planId: z.string() }).passthrough().parse(JSON.parse(notice.prompt.slice('KWAGENT_PLAN\n'.length)));
+        const plan = this.store.plan(marker.planId);
+        const originalRevision = z.object({ revision: z.number().int() }).passthrough().parse(JSON.parse(notice.prompt.slice('KWAGENT_PLAN\n'.length))).revision;
+        const expected = versions[plan.id] ?? originalRevision + (plan.status === 'completed' ? 1 : 0);
+        return plan.roleId === roleId && plan.revision === expected && plan.status !== 'cancelled' && (plan.purpose === 'internal' || !plan.relatedRecords.length || this.validRelated(roleId, plan.relatedRecords));
+      });
       const admitted = this.store.transaction(() => {
         const selected = notices.filter(notice => this.admitOccurrence(roleId, notice.prompt, notice.occurrence));
         this.store.setMeta(key, JSON.stringify(selected));
+        this.saveNoticeVersions(key, selected);
         return selected;
       });
       if (this.store.plans(roleId).some(plan => plan.kind === 'time' && plan.status === 'pending' && timingSchema.parse(plan.timing).kind === 'rrule')) await this.reconcile(roleId);
+      this.saveNoticeVersions(key, admitted);
       return admitted;
     });
   }
@@ -134,6 +152,7 @@ export class Plans {
     const marker = z.object({ planId: z.string(), revision: z.number().int() }).passthrough().parse(JSON.parse(prompt.slice('KWAGENT_PLAN\n'.length)));
     const plan = this.store.plan(marker.planId);
     if (plan.roleId !== roleId || plan.revision !== marker.revision || ['completed', 'cancelled'].includes(plan.status)) return false;
+    if (plan.purpose !== 'internal' && plan.relatedRecords.length && !this.validRelated(roleId, plan.relatedRecords)) return false;
     const timing = timingSchema.parse(plan.timing);
     const key = `occurrence:${plan.id}:${timing.kind === 'at' ? timing.at : occurrence}`;
     if (this.store.meta(key)) return false;
@@ -142,6 +161,14 @@ export class Plans {
       if (['after', 'at', 'rrule'].includes(timing.kind)) this.store.savePlan({ ...plan, status: timing.kind === 'rrule' ? 'pending' : 'completed', scheduleId: null, revision: plan.revision + 1, updatedAt: now() }, plan.revision, roleId);
     });
     return true;
+  }
+  private validRelated(roleId: string, ids: string[], scheduled = false): boolean {
+    return ids.some(id => { const record = this.store.get('continuity', id, continuitySchema); return record?.roleId === roleId && continuityActive({ ...record, data: { ...record.data, applicableAt: scheduled ? null : record.data.applicableAt } }, now()); });
+  }
+  private saveNoticeVersions(key: string, notices: ScheduleNotice[]): void {
+    const versions: Record<string, number> = {};
+    for (const notice of notices) if (notice.prompt.startsWith('KWAGENT_PLAN\n')) { const marker = z.object({ planId: z.string() }).passthrough().parse(JSON.parse(notice.prompt.slice('KWAGENT_PLAN\n'.length))); versions[marker.planId] = this.store.plan(marker.planId).revision; }
+    this.store.setMeta(`${key}:versions`, JSON.stringify(versions));
   }
 }
 

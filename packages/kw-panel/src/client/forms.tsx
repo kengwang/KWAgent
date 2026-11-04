@@ -73,10 +73,13 @@ export function PlanForm({ roleId, call, initial, onDone }: { roleId: string; ca
   const [scene, setScene] = useState(initial?.context?.scene ?? '');
   const [peerId, setPeerId] = useState(String(initial?.context?.peerId ?? ''));
   const [sources, setSources] = useState(initial?.sources.join('\n') ?? '');
+  const [purpose, setPurpose] = useState(initial?.purpose ?? 'internal');
+  const [relatedRecords, setRelatedRecords] = useState(initial?.relatedRecords.join('\n') ?? '');
   return <form className="kw-form" onSubmit={event => {
     event.preventDefault();
     const value: Record<string, unknown> = { action: initial ? 'update' : 'create', ...(initial ? { id: initial.id, expectedRevision: initial.revision } : {}), kind, title, instruction };
     value.context = scene ? { scene, peerId: Number(peerId) } : null; value.sources = sources.split(/\s+/).filter(Boolean);
+    value.purpose = purpose; value.relatedRecords = relatedRecords.split(/\s+/).filter(Boolean);
     if (kind === 'condition') value.condition = { text: condition, eventTypes: types.split(/[,，\s]+/).filter(Boolean), peerIds: numbers(peers) };
     if (kind === 'time') {
       const values: Record<string, unknown> = { after: { kind: 'after', after_seconds: Number(seconds) }, every: { kind: 'every', every_seconds: Number(seconds) }, at: { kind: 'at', at }, daily: { kind: 'daily', daily: { time: clock, time_zone: zone } }, weekly: { kind: 'weekly', weekly: { time: clock, time_zone: zone, weekdays: numbers(weekdays) } }, cron: { kind: 'cron', cron: { expression, time_zone: zone } }, rrule: { kind: 'rrule', rrule: rule } };
@@ -92,6 +95,7 @@ export function PlanForm({ roleId, call, initial, onDone }: { roleId: string; ca
     <label>交流情境<select value={scene} onChange={event => setScene(event.target.value as typeof scene)}><option value="">内部自主活动</option><option value="group">群聊</option><option value="private">私聊</option></select></label>
     {scene && <label>会话对象<input type="number" min="1" required value={peerId} onChange={event => setPeerId(event.target.value)} /></label>}
     <label>来源引用<textarea value={sources} onChange={event => setSources(event.target.value)} placeholder="真实事件或操作 ID，使用空白分隔。" /></label>
+    <label>安排目的<select value={purpose} onChange={event => setPurpose(event.target.value as typeof purpose)}><option value="internal">内部活动</option><option value="review">状态复核</option><option value="contact">考虑交流</option></select></label><label>关联连续性记录<textarea value={relatedRecords} onChange={event => setRelatedRecords(event.target.value)} placeholder="记录标识，每行一条。到期重新判断，不自动发送。" /></label>
     {kind === 'condition' && <><label>触发条件<textarea required value={condition} onChange={event => setCondition(event.target.value)} /></label><label>相关事件类型<input value={types} onChange={event => setTypes(event.target.value)} placeholder="留空表示任意事件，多个类型使用逗号分隔" /></label><label>相关会话<input value={peers} onChange={event => setPeers(event.target.value)} placeholder="留空表示任意会话" /></label></>}
     {kind === 'time' && <><label>时间规则<select value={timeKind} onChange={event => setTimeKind(event.target.value)}><option value="after">延迟一次</option><option value="at">指定时间</option><option value="every">固定周期</option><option value="daily">每日</option><option value="weekly">每周</option><option value="cron">Cron</option><option value="rrule">RRULE</option></select></label>
       {['after', 'every'].includes(timeKind) && <label>{timeKind === 'after' ? '延迟秒数' : '周期秒数'}<input type="number" required min={timeKind === 'every' ? 60 : 1} value={seconds} onChange={event => setSeconds(event.target.value)} /></label>}
