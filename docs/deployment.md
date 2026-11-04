@@ -8,6 +8,34 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 
 `KW_DATA_ROOT` 是服务器上的持久目录。Compose 将它挂载到容器 `/data`。应用使用 UID/GID 10001；数据准备命令在停止应用时创建目录并设置权限。
 
+## GHCR 镜像与 1Panel 网络
+
+服务器只需要 Compose 文件和自己的 `.env`。使用 `deploy/compose.1panel.yaml`，无需上传应用源码、安装 Bun 或构建镜像。该配置没有 `build` 和 `ports`，仅接入已有的外部网络 `1panel-network`。
+
+同目录已有 `compose.yml` 时，将模板保存为 `compose.kwagent.yaml`，在 `.env` 中组合两个文件：
+
+```dotenv
+COMPOSE_PROJECT_NAME=kwagent
+COMPOSE_FILE=compose.yml:compose.kwagent.yaml
+KW_IMAGE=ghcr.io/kengwang/kwagent:0.3.0
+KW_DATA_ROOT=./data/agent
+KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
+```
+
+没有已有 Compose 文件时，将模板保存为 `compose.yaml`，省略 `COMPOSE_FILE`。填写模型、Milky 和凭据后，执行：
+
+```sh
+docker compose --env-file .env config --quiet
+docker compose --env-file .env pull kwagent
+docker compose --env-file .env run --rm --no-deps --user 0 kwagent node scripts/prepare-data.mjs
+docker compose --env-file .env up -d --no-build --wait kwagent
+docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
+```
+
+反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
+
+`.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
+
 ## 构建与启动
 
 ```sh

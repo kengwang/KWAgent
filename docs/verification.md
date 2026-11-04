@@ -57,4 +57,4 @@ v0.3.0 在独立测试卷中使用保留的旧镜像创建数据，再启动候�
 
 生产服务器的 HTTPS 域名与连接方式尚未提供，生产环境 TLS、Cookie、代理长连接和 Lagrange 访问签名媒体仍需在该环境执行。已有 Compose、代理模板及部署命令。
 
-GitHub 仓库配置为 `kengwang/KWAgent`（私有），GHCR 路径为 `ghcr.io/kengwang/kwagent`。自动化规则、标签含义和私密文件边界见 `docs/github.md`，远端运行结果以 GitHub Actions 记录为准。v0.3.0 使用版本标签、版本镜像及完整提交镜像标识，保留 v0.1.0、v0.2.0 发布物。
+GitHub 仓库配置为 `kengwang/KWAgent`（公开），GHCR 路径为 `ghcr.io/kengwang/kwagent`。自动化规则、标签含义和私密文件边界见 `docs/github.md`，远端运行结果以 GitHub Actions 记录为准。v0.3.0 使用版本标签、版本镜像及完整提交镜像标识，保留 v0.1.0、v0.2.0 发布物。
