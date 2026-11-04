@@ -70,6 +70,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Reserve disk space for release upgrades
+        run: |
+          df -h / /var/lib/docker
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+          df -h / /var/lib/docker
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
       - name: Check version tag and choose image
         id: release
         env:
