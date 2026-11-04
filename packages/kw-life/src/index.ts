@@ -193,6 +193,12 @@ export class Life extends Service {
       try { await this.lifecycle.archived(role.id, role.sessionId); } catch (error) { this.fail(error, role.id); }
     }
   }
+  async prepareEmptySession(role: Role): Promise<void> {
+    if (await this.ctx.sessionPersistence.stat(SessionId(role.sessionId))) return;
+    const cwd = join(this.config.dataRoot, 'workspaces', role.id); await mkdir(cwd, { recursive: true });
+    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: { provider: role.provider, model: role.model } });
+    try { await this.sessions.flush(handle.agent.session); } finally { await handle.dispose(); }
+  }
   async retireRole(roleId: string): Promise<void> {
     const timer = this.timers.get(roleId); if (timer) clearTimeout(timer); this.timers.delete(roleId);
     this.dispatchAbort.get(roleId)?.abort(); this.stopping.get(roleId)?.abort();

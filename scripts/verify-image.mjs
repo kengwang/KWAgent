@@ -48,6 +48,12 @@ try {
   const deleted = admin('role.delete', { id: disposable.id, expectedRevision: disposable.revision }); assert.ok(deleted.deletedAt);
   assert.equal(admin('records.list', { kind: 'role' }).items.some(item => item.id === disposable.id), false);
   assert.ok(admin('persona.read', { roleId: disposable.id }).summary.deletedAt);
+  for (const state of ['paused', 'stopped']) {
+    const inactive = admin('role.create', { id: `image-${state}`, accountId: 'main', name: state, initialPersona: '离线管理角色。', provider: 'deepseek-official', model: 'configured-at-deployment', state });
+    const changed = admin('role.reset', { id: inactive.id, expectedRevision: inactive.revision }); assert.equal(changed.state, state); assert.notEqual(changed.sessionId, inactive.sessionId);
+    assert.ok(admin('session.records', { roleId: inactive.id }).items.length);
+    assert.ok(admin('role.delete', { id: inactive.id, expectedRevision: changed.revision }).deletedAt);
+  }
   const duplicate = spawnSync(process.execPath, ['scripts/start.mjs'], { encoding: 'utf8', timeout: 10000 });
   assert.notEqual(duplicate.status, 0); assert.match(duplicate.stderr, /ELOCKED/);
   admin('quiesce');

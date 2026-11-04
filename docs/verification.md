@@ -1,5 +1,9 @@
 # 验收记录
 
+## v0.4.1
+
+隔离 Host 将 Milky 地址配置为不可用的本机端口，实际验证未启用、暂停、停止三种角色的重置、空白 Session 持久化、Session 查询与删除。全部保留原有状态，没有模型或社交调用。报告位于 `.artifacts/verification/offline-lifecycle.log`。
+
 ## v0.4.0
 
 验收日期：2026 年 11 月 5 日。真实 SQLite 检查会话轮换、删除标记、Schema 3 到 4 一致快照、原始经历保留、版本冲突、跨角色 Session 拒绝、事务失败撤销，以及已接纳输入不重复投递。

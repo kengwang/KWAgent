@@ -87,10 +87,11 @@ export class RoleLifecycle {
           role = store.rotateRoleSession(role.id, input.to!, store.role(role.id).revision, accepted, input.reason);
         }
         await this.archive(input.from);
-        const handle = await this.life.ensure(role.id, false);
+        const handle = input.state === 'active' ? await this.life.ensure(role.id, false) : undefined;
+        if (!handle) await this.life.prepareEmptySession(role);
         role = store.updateRole(role.id, { state: input.state }, store.role(role.id).revision, 'owner', '会话重置完成，保留角色启停状态');
         await this.life.plans.reconcileRole(role.id);
-        if (role.state === 'active' && !this.life.maintenance) await this.life.extensions.restore(role.id, handle.agent.ctx);
+        if (handle && role.state === 'active' && !this.life.maintenance) await this.life.extensions.restore(role.id, handle.agent.ctx);
       } else {
         await this.life.plans.cancelRole(role.id);
         await this.life.extensions.disableRole(role.id);
