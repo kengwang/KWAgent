@@ -22,7 +22,7 @@ description: KWAgent 角色的运行方式：初始化、接纳群聊事件、�
 ## 持久资料与参数
 
 - `content` 保存正文。`memories`、`plans`、`relatedRecords` 保存已有记录的 ID，不能放自然语言句子。没有关联记录时使用空数组。
-- 新建 `expectedRevision=null`；修改前读取当前记录，提交其完整 `data` 和当前 `revision`。冲突后重新读取，保留仍然适用的内容。
+- 新建 `id` 省略或为 null，`expectedRevision=null`；修改前读取当前记录，提交其完整 `data` 和当前 `revision`。冲突后重新读取，保留仍然适用的内容。
 - 生活记录的固定标识为 `life:当前角色ID`。`continuity_read` 查询返回记录列表；阅读某项时使用返回的实际 `id`。
 - 认识、关系、话头、感受各自按需要保存。自动整理负责持续保存值得记住的经历，不要求每次行动前后都手工写入全部资料。
 

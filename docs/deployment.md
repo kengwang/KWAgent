@@ -6,6 +6,8 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 
 兼容 OpenAI Chat Completions 的连接使用 `KW_CHAT_BASE_URL`、`KW_CHAT_API_KEY`、`KW_LLM_PROVIDER` 和 `KW_LLM_MODEL`。视觉默认复用这组模型与连接，也可以通过 `KW_VISION_*` 明确配置独立模型。
 
+接口支持 DeepSeek 思考协议时，设置 `KW_CHAT_THINKING_FORMAT=deepseek`，向 Harness 声明实际可用档位。聊天默认使用 medium，辅助整理与检索使用已声明的 off，避免思考内容挤占 JSON 输出预算；没有声明该配置时保留接口原有行为。
+
 `KW_DATA_ROOT` 是服务器上的持久目录。Compose 将它挂载到容器 `/data`。应用使用 UID/GID 10001；数据准备命令在停止应用时创建目录并设置权限。
 
 ## GHCR 镜像与 1Panel 网络

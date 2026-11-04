@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 loadEnvFile('.env');
 const root = resolve('.artifacts/message-interruption', String(Date.now()));
 await mkdir(root, { recursive: true });
-const env = { ...process.env, KW_DATA_ROOT: root, DSH_HOME: join(root, 'dsh'), KW_HOST_PORT: '3092', KW_PUBLIC_URL: 'http://127.0.0.1:3092/', HTTP_PROXY: 'http://127.0.0.1:7897', HTTPS_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'localhost,127.0.0.1' };
+const env = { ...process.env, KW_DATA_ROOT: root, DSH_HOME: join(root, 'dsh'), KW_HOST_PORT: '3092', KW_PUBLIC_URL: 'http://127.0.0.1:3092/', KW_BACKUP_ENABLED: 'false', KW_CHAT_THINKING_FORMAT: 'deepseek', HTTP_PROXY: 'http://127.0.0.1:7897', HTTPS_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'localhost,127.0.0.1' };
 const log = openSync(join(root, 'harness.log'), 'w', 0o600);
 const host = spawn(process.execPath, ['scripts/start.mjs'], { env, stdio: ['ignore', log, log] });
 const admin = (action, payload = null) => {
@@ -69,12 +69,15 @@ try {
   assert.equal(life.data.kind, 'life');
   assert.ok(life.data.memories.length > 0);
   assert.ok(life.data.memories.every(value => admin('memory.read', { roleId: id, id: value })));
-  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationInterrupted: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, noSocialSends: true };
+  assert.ok(admin('role.compact', { id }), '真实会话应完成压缩');
+  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationInterrupted: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, compacted: true, noSocialSends: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/message-interruption.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {
-  if (created && host.exitCode === null) admin('role.control', { id, state: 'paused' });
-  if (host.exitCode === null) { const exit = new Promise(resolve => host.once('exit', resolve)); host.kill('SIGTERM'); await Promise.race([exit, delay(20000)]); if (host.exitCode === null) host.kill('SIGKILL'); }
-  closeSync(log);
+  try { if (created && host.exitCode === null && admin('role.read', { roleId: id }).state !== 'paused') admin('role.control', { id, state: 'paused' }); }
+  finally {
+    if (host.exitCode === null) { const exit = new Promise(resolve => host.once('exit', resolve)); host.kill('SIGTERM'); await Promise.race([exit, delay(20000)]); if (host.exitCode === null) host.kill('SIGKILL'); }
+    closeSync(log);
+  }
 }

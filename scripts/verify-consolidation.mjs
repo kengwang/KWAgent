@@ -1,0 +1,25 @@
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { loadEnvFile } from 'node:process';
+import assert from 'node:assert/strict';
+import OpenAI from 'openai';
+import { consolidationSchema, consolidationInstructions } from '@kwagent/kw-mind';
+import { tokens } from '@kwagent/core';
+
+const inputFile = process.argv[2];
+if (!inputFile) throw new Error('用法：node scripts/verify-consolidation.mjs <实际整理输入的JSON文件>');
+loadEnvFile('.env');
+const original = JSON.parse(await readFile(inputFile, 'utf8'));
+assert.ok(Array.isArray(original.input?.sources), '需要实际整理请求的 input.sources');
+const client = new OpenAI({ baseURL: process.env.KW_CHAT_BASE_URL, apiKey: process.env.KW_CHAT_API_KEY, maxRetries: 0 });
+const response = await client.chat.completions.create({ model: process.env.KW_LLM_MODEL, messages: [{ role: 'system', content: consolidationInstructions }, { role: 'user', content: JSON.stringify(original.input) }], max_tokens: 8192, ...(process.env.KW_CHAT_THINKING_FORMAT === 'deepseek' ? { thinking: { type: 'disabled' } } : {}) });
+await mkdir('.artifacts/verification', { recursive: true });
+await writeFile('.artifacts/verification/consolidation-response.json', JSON.stringify(response), { mode: 0o600 });
+assert.equal(response.choices[0].finish_reason, 'stop');
+if (process.env.KW_CHAT_THINKING_FORMAT === 'deepseek') assert.equal(response.usage?.completion_tokens_details?.reasoning_tokens ?? 0, 0);
+const result = consolidationSchema.parse(JSON.parse(response.choices[0].message.content));
+const sources = new Set([...original.input.sources.map(source => source.id), ...(original.input.memories ?? []).flatMap(memory => memory.sources), ...(original.input.continuity ?? []).flatMap(record => record.data.sources)]);
+for (const memory of result.memories) assert.ok(memory.sources.every(id => sources.has(id)));
+for (const change of result.continuity) assert.ok(change.data.sources.every(id => sources.has(id)));
+const report = { actualInput: true, actualModel: true, schemaValid: true, sourceIdsValid: true, promptTokens: tokens(consolidationInstructions), memories: result.memories.length, continuity: result.continuity.length, usage: response.usage };
+await writeFile('.artifacts/verification/consolidation-schema.json', JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report));

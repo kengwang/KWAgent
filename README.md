@@ -46,6 +46,8 @@ v0.3.0 的生活、人物关系、未完话头、情境表达和自我反思见 
 
 v0.3.1 提供 `kwagent-life` 运行 Skill，并修复负载预览的来源语义和收尾整理阻塞新输入的问题，见 [发布说明](docs/releases/v0.3.1.md)。
 
+v0.3.2 为自动整理补齐完整输出 Schema，并统一新建记录的 JSON null 标识用法，见 [发布说明](docs/releases/v0.3.2.md)。
+
 v0.2.0 增加不可变感知批次、活动时间线、人物与来源浏览、统一能力目录和有界负载读取。原始 JSON 与长文档保存到持久目录 `artifacts/`，`payload_read` 使用角色授权和 UTF-8 字节游标读取。`self_revise` 修订人格、自我状态与表达示例，并保存真实来源；`capability_read` 查询 Schema、接入支持及最近调用证据。Markdown 消息发送不支持。
 
 `verify-v2` 使用实际 Harness 与 PTC 执行长文档生成、失败及取消，验证有界预览、完整负载、分页、修订冲突和步骤快照。应用重启后执行 `resume` 检查持久引用。上述流程禁止 QQ 与空间发送。

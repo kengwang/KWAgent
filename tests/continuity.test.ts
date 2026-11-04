@@ -63,6 +63,16 @@ test('实际文件读取经负载投影后仍保留观察依据，内部资料�
     assert.equal(module.sourceMeaning('alice', internal.id), 'subjective');
   } finally { store.close(); }
 });
+
+test('新连续性记录接受JSON空标识并严格校验会话形状', () => {
+  const { store, module, base } = environment();
+  try {
+    const record = module.revise('alice', { id: null, expectedRevision: null, data: continuityDataSchema.parse({ ...base, kind: 'thread', context: { scene: 'group', peerId: 20001 } }), reason: '按实际JSON创建语义创建新记录' });
+    assert.ok(record.id);
+    assert.deepEqual(record.data.context, { scene: 'group', peerId: 20001 });
+    assert.throws(() => module.revise('alice', { id: null, expectedRevision: null, data: { ...record.data, context: '群聊' } as never, reason: '验证错误边界' }));
+  } finally { store.close(); }
+});
 test('情境选择保留情绪期限、反思期限、表达上限和私聊资料隔离', () => {
   const { store, module, base, request } = environment();
   try {

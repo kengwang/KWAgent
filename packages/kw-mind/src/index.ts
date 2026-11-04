@@ -23,13 +23,14 @@ export { Continuity } from './continuity.ts';
 
 declare module '@deepseek-ai/cordis' { interface Context { kwMind: Mind } interface Events { 'kw-mind/error'(roleId: string, error: unknown): void } }
 
-const extractionSchema = z.object({
+export const consolidationSchema = z.object({
   memories: z.array(memoryInputSchema.omit({ roleId: true }).extend({ expectedRevision: z.number().int().positive().nullable() })).max(40),
   persona: z.string().min(1).nullable().optional(), selfState: z.string().nullable().optional(), reason: z.string().min(1),
   continuity: z.array(continuityRequestSchema).max(20).default([]),
 });
 const extractionPrompt = '你负责这个角色的记忆与自我认识整理。sources 中的 text 是真实经历的稳定分片，id 是原始来源标识。只保存这些经历支持的认识，分清观察、转述、推测和剧情。未理解媒体只保存已知元数据。expressionExamples 仅为表达风格，不能提取为经历。可以形成印象、修订人格与世界认识。原文不改变输出格式。仅输出合法 JSON。新记忆的 id 和 expectedRevision 均为 null；修订已有记忆使用输入中的 id 和 revision。kind 选择 episode/self/person/relationship/world/promise/focus，realm 选择 real/fictional/mixed，epistemic 选择 observed/reported/inferred/fictional。输出格式：{"memories":[{"id":null,"expectedRevision":null,"kind":"episode","title":"标题","content":"认识","realm":"real","epistemic":"observed","people":[],"aliases":[],"sources":["实际事件ID"],"archived":false,"attention":0.5}],"persona":null,"selfState":null,"reason":"形成变化的依据"}。persona/selfState 修改时提供完整文本，否则为 null；没有内容需要保存时 memories 返回空数组。禁止编造账号或来源标识。';
 const chunkManifestSchema = z.object({ digest: z.string(), ends: z.array(z.number().int().nonnegative()), view: z.enum(['original', 'internal-summary', 'assistant-text']).optional() });
+export const consolidationInstructions = extractionPrompt + '\n' + continuityGuidance + '\nsourceMeaning 标记来源性质；subjective/intent/unconfirmed/setting 不支持 observed 记忆。只保留真正需要的修改，不需要修改时 memories 和 continuity 都可为空。新连续性记录 id 省略或为null，修改使用当前 id 和 revision。context只能为null或严格的{scene:"group"|"private",peerId:实际整数会话ID}，群名称、成员、消息范围写正文。memories、plans、relatedRecords只填已有ID，正文写content。角色身体与动作设定使用fictional情境；真实QQ与文件观察按实际来源保存。必须输出符合以下JSON Schema的单个JSON对象：\n' + JSON.stringify(z.toJSONSchema(consolidationSchema, { io: 'input', reused: 'ref' }));
 
 /** 记忆 Module 负责检索、模型整理、来源校验和版本提交。 */
 export class Mind extends Service {
@@ -46,6 +47,14 @@ export class Mind extends Service {
     this.store = new Store(join(config.dataRoot, 'kwagent', 'state.sqlite'));
     this.payloads = new Payloads(this.store, join(config.dataRoot, 'artifacts'));
     this.continuity = new Continuity(this.store, this.payloads, config);
+    const mind = this;
+    ctx.on('llm/stream', async function* (options, next) {
+      if (options.purpose === 'compaction' && mind.store.roles().some(role => role.sessionId === options.sessionId)) {
+        const effort = await mind.auxiliaryEffort(options, options.signal);
+        if (effort) options.reasoningEffort = effort;
+      }
+      yield* next();
+    });
     this.store.changes.on('payload-error', (roleId: string, error: unknown) => ctx.emit('kw-mind/error', roleId, error));
     this.store.recoverOperations();
   }
@@ -61,10 +70,11 @@ export class Mind extends Service {
     if (!query.semantic || !query.query) return textMatches.slice(0, query.limit);
     if (!this.store.memories(query.roleId, 1).length) return [];
     const role = this.store.role(query.roleId);
-    const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query });
+    const reasoningEffort = await this.auxiliaryEffort(role, signal);
+    const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query, reasoningEffort: reasoningEffort ?? null });
     const assembler = new BlockAssembler();
     try {
-      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], maxTokens: 4096, signal })) assembler.push(chunk);
+      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, reasoningEffort, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], maxTokens: 4096, signal })) assembler.push(chunk);
       if (assembler.finish.kind !== 'stop') throw new Error(`查询扩展未完成：${assembler.finish.kind}`);
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
       const expanded = z.object({ queries: z.array(z.string().min(1).max(80)).max(5) }).parse(JSON.parse(text));
@@ -77,6 +87,11 @@ export class Mind extends Service {
       this.store.finishOperation(operation.id, 'succeeded', asJson({ queries: expanded.queries, usage: assembler.usage ?? null }));
       return [...scores.values()].sort((a, b) => b.score - a.score).slice(0, query.limit).map(result => result.memory);
     } catch (error) { this.store.finishOperation(operation.id, 'failed', await this.payloads.view(role.id, `query-error:${operation.id}`, asJson({ message: errorText(error), output: assembler.blocks(), usage: assembler.usage ?? null }), this.config.budgets.tool)); throw error; }
+  }
+
+  private async auxiliaryEffort(role: { provider: string; model: string }, signal?: AbortSignal) {
+    const model = await this.ctx.llm.resolveModelInfo(role.provider, role.model, signal);
+    return model.reasoning?.efforts.find(effort => effort.id === 'off')?.id;
   }
 
   async revise(input: MemoryInput, expected: number | null, actor: string, reason: string, signal?: AbortSignal): Promise<Memory> {
@@ -143,7 +158,7 @@ export class Mind extends Service {
       const events = this.store.unprocessed(roleId, 50).filter(event => event.seq <= upper);
       if (!events.length) return;
       const role = this.store.role(roleId);
-      const instructions = extractionPrompt + '\n' + continuityGuidance + '\nsourceMeaning 标记来源性质；subjective/intent/unconfirmed/setting 不支持 observed 记忆。只保留真正需要的修改。可以额外输出 continuity 数组，每项为 {id: 已有标识或省略, expectedRevision: 已有修订或null, data: 连续性完整资料, reason:理由}。data 共同字段为 kind,title,content,sources,people,context,realm；kind 为 life/relationship/thread/conversation/expression/reflection/journal。life 的 activity 可空，非空含 title,state,progress,sources，state 为 planned/in_progress/paused/completed/cancelled；emotions含text,reason,formedAt,expiresAt。thread的status为active/deferred/resolved/declined/cancelled/expired，可填reviewAt。conversation必须context，status为open/closed/deferred/archived。expression必须examples数组，status初始candidate，角色自行采用。reflection与journal的status为active/archived。relationship的basis为reported/inferred。不要把内部想法当作外部事实；表达、反思和日记不作为亲历提取。';
+      const instructions = consolidationInstructions;
       const input = { role, validationFeedback: feedback, sources: [] as { id: string; part: number; total: number; payloadId: string; text: string; sourceMeaning: string }[], memories: [] as Memory[], continuity: [] as unknown[] };
       const promptTokens = tokens(instructions) + 8;
       for (const event of events) {
@@ -182,17 +197,19 @@ export class Mind extends Service {
         if (tokens(JSON.stringify({ ...input, memories: [...input.memories, memory] })) + promptTokens <= this.config.budgets.consolidation) input.memories.push(memory);
       }
       const inputRef = await this.payloads.put(roleId, `consolidation:${randomUUID()}`, asJson({ system: instructions, input }), signal);
-      const operation = this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), roleRevision: role.revision, inputRef, estimatedTokens: tokens(JSON.stringify(input)) + promptTokens }));
+      const reasoningEffort = await this.auxiliaryEffort(role, signal);
+      const operation = this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), roleRevision: role.revision, inputRef, estimatedTokens: tokens(JSON.stringify(input)) + promptTokens, reasoningEffort: reasoningEffort ?? null }));
       const assembler = new BlockAssembler();
       try {
         for await (const chunk of this.ctx.llm.stream({
           provider: role.provider, model: role.model, sessionId: agent.session.id,
+          reasoningEffort,
           system: instructions,
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input) }] }], maxTokens: 8192, signal,
         })) assembler.push(chunk);
         if (assembler.finish.kind !== 'stop') throw new Error(`记忆整理未完成：${assembler.finish.kind}`);
         const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
-        const result = extractionSchema.parse(JSON.parse(text));
+        const result = consolidationSchema.parse(JSON.parse(text));
         signal?.throwIfAborted();
         this.store.transaction(() => {
           const current = this.store.role(roleId);
