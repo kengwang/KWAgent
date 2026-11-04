@@ -27,7 +27,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
     case 'continuity.read': {
       const input = z.object({ roleId: z.string(), id: z.string(), raw: z.boolean().default(false) }).strict().parse(value);
       const record = life.context.kwMind.continuity.read(input.roleId, input.id);
-      return input.raw ? asJson(record) : { ...await detail(input.roleId, input.id, asJson(record)), receipts: record.data.kind === 'thread' ? record.data.followups.slice(0, 50).map(item => { const operation = life.store.get('operation', item.operationId, operationSchema); return { ...item, state: operation?.state ?? 'unknown', association: !item.pending && operation?.context ? 'confirmed-target' : '待核实或未记录会话关联' }; }) : [] };
+      return input.raw ? asJson(record) : { ...await detail(input.roleId, input.id, asJson(record)), receipts: record.data.kind === 'thread' ? record.data.followups.slice(0, 50).map(item => { const operation = life.store.get('operation', item.operationId, operationSchema); return { ...item, state: operation?.state ?? 'unknown', association: !item.pending && operation && life.context.kwMind.payloads.operationContext(operation) ? 'confirmed-target' : '待核实或未记录会话关联' }; }) : [] };
     }
     case 'role.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return asJson(life.store.role(input.roleId)); }
     case 'persona.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return detail(input.roleId, `role:${input.roleId}`, asJson(life.store.role(input.roleId))); }

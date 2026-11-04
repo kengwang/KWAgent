@@ -9,13 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
-import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now } from '@kwagent/core';
+import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now, milkyId } from '@kwagent/core';
 import type { Experience } from '@kwagent/core';
 import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTools, markdownUnsupported } from './client.ts';
 import { MilkyEvents } from './events.ts';
 import { MediaModule } from './media.ts';
 
 export { MilkyClient, responseData, MilkyBusinessError } from './client.ts';
+export { milkyId, toolConversation } from '@kwagent/core';
 export { MilkyEvents } from './events.ts';
 export { MediaModule } from './media.ts';
 export { normalizeExperience, conversationOrder, NORMALIZER_VERSION } from './perception.ts';
@@ -77,17 +78,18 @@ export class Lagrange extends Service {
         call: async (args, exec) => {
           assertSupportedMessage(tool.name, args);
           if (!validateInput(args)) { const message = `Milky 参数无效：${this.ajv.errorsText(validateInput.errors)}`; this.client.capabilities.record(tool.name, 'failed', { stage: 'input-schema', callId: exec.callId, roleId, message }); throw new Error(message); }
-          if (['send_private_message', 'send_temp_message', 'upload_private_file'].includes(tool.name) && typeof args.user_id === 'number') {
+          if (['send_private_message', 'send_temp_message', 'upload_private_file'].includes(tool.name) && args.user_id !== undefined) {
+            const userId = milkyId(args.user_id);
             const store = this.ctx.kwMind.store;
-            const owner = store.route(this.client.accountId, 'private', args.user_id);
+            const owner = store.route(this.client.accountId, 'private', userId);
             if (owner && owner !== roleId) {
-              const event = store.appendEvent({ accountId: this.client.accountId, roleId: owner, source: 'handoff', type: 'private-conversation-handoff', occurredAt: now(), scene: 'private', peerId: args.user_id, senderId: null, messageSeq: null, self: false, payload: asJson({ fromRoleId: roleId, tool: tool.name, arguments: args }) }).event;
+              const event = store.appendEvent({ accountId: this.client.accountId, roleId: owner, source: 'handoff', type: 'private-conversation-handoff', occurredAt: now(), scene: 'private', peerId: userId, senderId: null, messageSeq: null, self: false, payload: asJson({ fromRoleId: roleId, tool: tool.name, arguments: args }) }).event;
               this.received.emit('event', event);
               throw new Error(`私聊事项已交给负责角色 ${store.role(owner).name}，交接记录 ${event.id}`);
             }
             if (!owner) {
               const role = store.role(roleId);
-              store.updateRole(roleId, { contacts: [...role.contacts, args.user_id] }, role.revision, roleId, '主动私聊建立联系人归属');
+              store.updateRole(roleId, { contacts: [...role.contacts, userId] }, role.revision, roleId, '主动私聊建立联系人归属');
             }
           }
           const result = await this.client.execute(tool.name, args, roleId, exec.signal, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: this.media.store.invocationId(exec.token) });
@@ -110,7 +112,7 @@ export class Lagrange extends Service {
     registerTool(ctx, 'media_inspect', '理解图片、语音、视频或文档，读取结果会保存为带来源的经历。', z.object({ mediaId: z.string(), prompt: z.string().optional(), action: z.enum(['inspect', 'extract_audio']).default('inspect') }), (input, exec) => input.action === 'extract_audio' ? this.media.extractAudio(roleId, input.mediaId, exec.signal) : this.media.inspect(roleId, input.mediaId, input.prompt, exec.signal));
   }
   socialContext(roleId: string, contexts: { scene: 'group' | 'private'; peerId: number }[]) {
-    return this.media.store.operations(roleId, 200).filter(operation => /^send_(group|private|temp)_message$/.test(operation.tool) && (!contexts.length || operation.context && contexts.some(context => context.scene === operation.context!.scene && context.peerId === operation.context!.peerId))).slice(0, 12).map(operation => ({ id: operation.id, tool: operation.tool, state: operation.state, context: operation.context, startedAt: operation.startedAt, endedAt: operation.endedAt, read: 'operation_read', meaning: operation.state === 'unknown' ? '可能已经产生远程效果，需要核实，不能自动重放' : '真实操作回执，交流动机另外保存' }));
+    return this.media.store.operations(roleId, 200).filter(operation => /^send_(group|private|temp)_message$/.test(operation.tool)).map(operation => ({ ...operation, context: this.ctx.kwMind.payloads.operationContext(operation) })).filter(operation => !contexts.length || operation.context && contexts.some(context => context.scene === operation.context!.scene && context.peerId === operation.context!.peerId)).slice(0, 12).map(operation => ({ id: operation.id, tool: operation.tool, state: operation.state, context: operation.context, startedAt: operation.startedAt, endedAt: operation.endedAt, read: 'operation_read', meaning: operation.state === 'unknown' ? '可能已经产生远程效果，需要核实，不能自动重放' : '真实操作回执，交流动机另外保存' }));
   }
   close(): Promise<void> { this.closeTask ??= this.stop(); return this.closeTask; }
   private async stop(): Promise<void> { await this.events.close(); this.mediaAbort.abort(); await this.mediaQueue.catch(error => { if (!this.mediaAbort.signal.aborted) throw error; }); await this.client.close(); this.received.removeAllListeners(); }

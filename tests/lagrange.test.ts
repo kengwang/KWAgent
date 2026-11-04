@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, loadConfig } from '@kwagent/core';
-import { MilkyClient, MilkyEvents, responseData, MilkyBusinessError, MediaModule } from '@kwagent/kw-lagrange';
+import { MilkyClient, MilkyEvents, responseData, MilkyBusinessError, MediaModule, milkyId, toolConversation } from '@kwagent/kw-lagrange';
 import { mcpToolName } from '../packages/kw-lagrange/src/index.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,19 @@ test('Milky 业务错误和结果未知区分，合法 boolean Schema 保留', (
   const longName = 'x'.repeat(100);
   assert.equal(mcpToolName(longName).length, 64);
   assert.notEqual(mcpToolName(longName), mcpToolName(`${longName}y`));
+});
+
+test('远端十进制字符串与整数标识使用相同的会话和联系人归属', () => {
+  for (const id of [20001, '20001']) assert.deepEqual(toolConversation({ group_id: id }), { scene: 'group', peerId: 20001 });
+  for (const id of [10001, '10001']) {
+    assert.equal(milkyId(id), 10001);
+    assert.deepEqual(toolConversation({ user_id: id }), { scene: 'private', peerId: 10001 });
+  }
+  assert.deepEqual(toolConversation({ group_id: '20001', user_id: '10001' }), { scene: 'group', peerId: 20001 });
+  assert.deepEqual(toolConversation({ group_id: '20001', user_id: '10001' }, 'send_temp_message'), { scene: 'private', peerId: 10001 });
+  assert.equal(toolConversation({ group_id: '20001' }, 'send_temp_message'), null);
+  assert.equal(toolConversation({}), null);
+  for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', ' 123', '1e3', '1.2', '9007199254740992', null, true]) assert.throws(() => milkyId(value));
 });
 
 test('真实事件接收 Module 去重、保留作者并避免自身消息触发', () => {

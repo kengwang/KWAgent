@@ -1,5 +1,5 @@
 {
-  "name": "@kwagent/kw-mind", "version": "0.3.2", "type": "module",
+  "name": "@kwagent/kw-mind", "version": "0.3.3", "type": "module",
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./compaction": { "types": "./lib/types/compaction.d.ts", "default": "./lib/compaction.js" }

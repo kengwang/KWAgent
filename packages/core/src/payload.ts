@@ -5,7 +5,7 @@ import { isUtf8 } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Store } from './store.ts';
-import { now, asJson, type Json } from './types.ts';
+import { now, asJson, toolConversation, type Json, type Operation } from './types.ts';
 import { fitText, readable, tokens } from './budget.ts';
 
 export const payloadReadSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(4).max(65536).default(4096) }).strict();
@@ -40,6 +40,15 @@ export class Payloads {
   }
   valueSync(roleId: string, id: string): Json {
     return this.decode(id, readFileSync(this.authorizedPath(roleId, id)));
+  }
+  operationContext(operation: Operation) {
+    if (operation.context && (operation.tool !== 'send_temp_message' || operation.context.scene === 'private')) return operation.context;
+    let value = operation.arguments;
+    if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.payloadId === 'string') {
+      if (!operation.roleId) throw new Error('操作负载缺少角色归属');
+      value = this.valueSync(operation.roleId, value.payloadId);
+    }
+    return value && typeof value === 'object' && !Array.isArray(value) ? toolConversation(value, operation.tool) : null;
   }
   async put(roleId: string, source: string, value: Json, signal?: AbortSignal): Promise<PayloadRef> {
     try {

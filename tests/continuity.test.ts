@@ -64,6 +64,25 @@ test('实际文件读取经负载投影后仍保留观察依据，内部资料�
   } finally { store.close(); }
 });
 
+test('旧字符串会话回执从完整负载恢复目标，未知执行仍需核实', async () => {
+  const { store, module, base, request } = environment();
+  try {
+    const argumentsRef = { ...await module.payloads.put('alice', 'legacy-intent', { user_id: '10001', message: [] }) };
+    const operation = store.startOperation('main', 'alice', 'send_private_message', argumentsRef);
+    store.recoverOperations();
+    const recovered = store.operations('alice', 10).find(item => item.id === operation.id)!;
+    assert.equal(recovered.state, 'unknown');
+    assert.equal(recovered.context, null);
+    assert.deepEqual(module.payloads.operationContext(recovered), { scene: 'private', peerId: 10001 });
+    assert.deepEqual(module.payloads.operationContext({ ...recovered, tool: 'send_temp_message', context: { scene: 'group', peerId: 20001 }, arguments: { group_id: '20001', user_id: '10001' } }), { scene: 'private', peerId: 10001 });
+    assert.throws(() => module.payloads.operationContext({ ...recovered, roleId: 'bob' }), /其他角色/);
+    const record = module.revise('alice', request({ ...base, kind: 'thread', followups: [{ operationId: operation.id, note: '核实中断前的意图', pending: false }] }));
+    assert.equal(record.data.kind, 'thread');
+    if (record.data.kind === 'thread') assert.equal(record.data.followups[0]!.pending, true);
+    assert.throws(() => module.revise('alice', request({ ...base, context: { scene: 'private', peerId: 10002 }, kind: 'thread', followups: [{ operationId: operation.id, note: '核实中断前的意图', pending: false }] })), /会话不一致/);
+  } finally { store.close(); }
+});
+
 test('新连续性记录接受JSON空标识并严格校验会话形状', () => {
   const { store, module, base } = environment();
   try {

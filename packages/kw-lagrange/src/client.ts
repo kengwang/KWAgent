@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
-import { asJson, APP_VERSION, CapabilityError, errorText, jsonSchema, now, Store } from '@kwagent/core';
+import { asJson, APP_VERSION, CapabilityError, errorText, jsonSchema, now, Store, toolConversation } from '@kwagent/core';
 import type { AppConfig, Json, Operation, Payloads } from '@kwagent/core';
 import { Capabilities } from './capabilities.ts';
 
@@ -116,7 +116,7 @@ export class MilkyClient {
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;
     const intent = roleId && this.payloads ? await this.payloads.view(roleId, `intent:${correlation?.callId ?? name}`, asJson(args), this.previewTokens, signal) : asJson(args);
-    const context = typeof args.group_id === 'number' ? { scene: 'group' as const, peerId: args.group_id } : typeof args.user_id === 'number' ? { scene: 'private' as const, peerId: args.user_id } : null;
+    const context = toolConversation(args, name);
     const operation = write ? this.store.startOperation(this.accountId, roleId, name, intent, { ...correlation, context }) : undefined;
     const run = async () => {
       let dispatched = false;

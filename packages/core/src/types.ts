@@ -5,6 +5,14 @@ export const jsonSchema: z.ZodType<Json> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(), z.array(jsonSchema), z.record(z.string(), jsonSchema),
 ]));
 export const identifier = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/);
+const milkyIdSchema = z.union([z.number(), z.string().regex(/^[1-9][0-9]*$/).transform(Number)]).pipe(z.number().int().positive().safe());
+export function milkyId(value: unknown): number { return milkyIdSchema.parse(value); }
+export function toolConversation(args: Record<string, unknown>, tool?: string) {
+  if (tool === 'send_temp_message') return args.user_id !== undefined ? { scene: 'private' as const, peerId: milkyId(args.user_id) } : null;
+  if (args.group_id !== undefined) return { scene: 'group' as const, peerId: milkyId(args.group_id) };
+  if (args.user_id !== undefined) return { scene: 'private' as const, peerId: milkyId(args.user_id) };
+  return null;
+}
 export const realmSchema = z.enum(['real', 'fictional', 'mixed']);
 export const desiredStateSchema = z.enum(['disabled', 'active', 'paused', 'stopped']);
 export const roleSchema = z.object({

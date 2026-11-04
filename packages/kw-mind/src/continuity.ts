@@ -111,8 +111,7 @@ export class Continuity {
           const operation = this.store.get('operation', followup.operationId, operationSchema);
           if (!operation || operation.roleId !== roleId || !/^send_(group|private|temp)_message$/.test(operation.tool)) throw new Error('承接记录需要当前角色的消息操作');
           if (operation.state === 'failed' || operation.state === 'started') throw new Error('承接操作尚未取得有效回执');
-          const raw = operation.arguments && typeof operation.arguments === 'object' && !Array.isArray(operation.arguments) ? operation.arguments : {};
-          const target = operation.context ?? (typeof raw.group_id === 'number' ? { scene: 'group', peerId: raw.group_id } : typeof raw.user_id === 'number' ? { scene: 'private', peerId: raw.user_id } : null);
+          const target = this.payloads.operationContext(operation);
           if (data.context && target && (data.context.scene !== target.scene || data.context.peerId !== target.peerId)) throw new Error('承接回执与话头会话不一致');
           if (!target && !followup.pending) throw new Error('回执会话未记录，需要明确以pending=true保存待核实关联');
           if (operation.state === 'unknown') followup.pending = true;
