@@ -128,7 +128,7 @@ export class Mind extends Service {
       const current = this.store.memory(item.id); if (current.roleId !== roleId || current.archived) continue;
       if (tokens(JSON.stringify({ memories: [...memories, current], continuity, communication })) <= role.memoryTokens) memories.push(current);
     }
-    const recent = this.store.db.prepare("SELECT id FROM events WHERE role_id=? AND scene IS NOT NULL AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY seq DESC LIMIT 12").all(roleId, scene.contexts.length, JSON.stringify(scene.contexts.map(context => `${context.scene}:${context.peerId}`))).map(row => this.store.event(String(row.id)));
+    const recent = this.store.db.prepare("SELECT id FROM events WHERE role_id=? AND seq>? AND scene IS NOT NULL AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY seq DESC LIMIT 12").all(roleId, Number(this.store.meta(`context-since:${roleId}`) ?? 0), scene.contexts.length, JSON.stringify(scene.contexts.map(context => `${context.scene}:${context.peerId}`))).map(row => this.store.event(String(row.id)));
     const exchanges: Json[] = [];
     while (communication.length && tokens(JSON.stringify({ memories, continuity, communication })) > role.memoryTokens) communication.pop();
     for (const event of recent) { const value = asJson({ id: event.id, scene: event.scene, peerId: event.peerId, senderId: event.senderId, self: event.self, occurredAt: event.occurredAt, payload: readable(event.payload) }); if (tokens(JSON.stringify({ memories, continuity, communication, exchanges: [...exchanges, value] })) <= role.memoryTokens) exchanges.push(value); }

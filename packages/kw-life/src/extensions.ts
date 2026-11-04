@@ -21,9 +21,18 @@ export type ExtensionRequest = z.infer<typeof extensionRequestSchema>;
 export class Extensions {
   private readonly running = new Map<string, () => Promise<void>>();
   private readonly installing = new Set<string>();
+  private readonly mutations = new Map<string, Set<Promise<Extension[] | Extension>>>();
   private readonly runtimeCode = runtimeFingerprint();
   constructor(readonly store: Store, readonly dataRoot: string, readonly owner: Context) {}
   async manage(roleId: string, raw: ExtensionRequest, ctx?: Context, signal?: AbortSignal): Promise<Extension[] | Extension> {
+    this.store.role(roleId);
+    if (this.store.meta(`lifecycle:${roleId}`)) throw new Error('角色正在管理会话，暂时不能修改扩展');
+    const task = this.change(roleId, raw, ctx, signal);
+    const active = this.mutations.get(roleId) ?? new Set(); this.mutations.set(roleId, active); active.add(task);
+    try { return await task; } finally { active.delete(task); if (!active.size) this.mutations.delete(roleId); }
+  }
+  async drain(roleId: string): Promise<void> { await Promise.allSettled([...this.mutations.get(roleId) ?? []]); }
+  private async change(roleId: string, raw: ExtensionRequest, ctx?: Context, signal?: AbortSignal): Promise<Extension[] | Extension> {
     const request = extensionRequestSchema.parse(raw);
     if (request.action === 'list') return this.store.extensions(roleId);
     if (!request.id) throw new Error('扩展需要 id');
@@ -101,7 +110,7 @@ export class Extensions {
         dependencies[value.packageName] = `link:${target.replaceAll('\\', '/')}`;
         if (value.client && !bundles.includes(value.packageName)) bundles.push(value.packageName);
       } else {
-        if (dependencies[value.packageName] !== `link:${target.replaceAll('\\', '/')}`) return null;
+        if (dependencies[value.packageName] !== `link:${target.replaceAll('\\', '/')}` && (!value.client || !profile.startedBundles.includes(value.packageName))) return null;
         delete dependencies[value.packageName];
         const index = bundles.indexOf(value.packageName); if (index >= 0) bundles.splice(index, 1);
       }
@@ -110,7 +119,7 @@ export class Extensions {
       if (!value.client) { if (!enabled) await unlink(link); return null; }
       if (runtimeFingerprint() !== this.runtimeCode) return '需要重启：KWAgent 运行文件已经更新，重启后加载已保存的浏览器扩展配置';
       const result = await this.owner.hmr.reconcileProfile();
-      if (!enabled) await unlink(link);
+      if (!enabled) await unlink(link).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
       if (result.warnings.length) throw new Error(`扩展激活失败：${result.warnings.join('\n')}`);
       return result.restartReason || result.pending.length ? `需要重启：${result.restartReason ?? result.pending.map(item => item.url).join(', ')}` : null;
     });
@@ -129,6 +138,12 @@ export class Extensions {
     }
   }
   async suspend(roleId: string): Promise<void> { for (const [key, release] of this.running) if (key.startsWith(`${roleId}:`)) { await release(); this.running.delete(key); } }
+  async disableRole(roleId: string): Promise<void> {
+    for (const extension of this.store.extensions(roleId)) if (extension.enabled || ['error', 'pending-restart'].includes(extension.state) || extension.client && this.owner.profileContext.startedBundles.includes(extension.packageName)) {
+      const result = await this.change(roleId, { action: 'disable', id: extension.id, entry: 'lib/index.js' }) as Extension;
+      if (result.state === 'pending-restart') throw new Error('停用角色扩展需要重启，重启后会继续完成删除操作');
+    }
+  }
   async close(): Promise<void> { for (const release of this.running.values()) await release(); this.running.clear(); }
 }
 

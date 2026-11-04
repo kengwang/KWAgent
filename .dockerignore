@@ -38,6 +38,8 @@
 **/compose.override.yml
 **/compose.override.yaml
 **/.artifacts
+**/.playwright-cli
+**/output/playwright
 **/data
 **/artifacts
 **/backups

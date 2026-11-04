@@ -30,7 +30,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
       return input.raw ? asJson(record) : { ...await detail(input.roleId, input.id, asJson(record)), receipts: record.data.kind === 'thread' ? record.data.followups.slice(0, 50).map(item => { const operation = life.store.get('operation', item.operationId, operationSchema); return { ...item, state: operation?.state ?? 'unknown', association: !item.pending && operation && life.context.kwMind.payloads.operationContext(operation) ? 'confirmed-target' : '待核实或未记录会话关联' }; }) : [] };
     }
     case 'role.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return asJson(life.store.role(input.roleId)); }
-    case 'persona.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); return detail(input.roleId, `role:${input.roleId}`, asJson(life.store.role(input.roleId))); }
+    case 'persona.read': { const input = z.object({ roleId: z.string() }).strict().parse(value); const role = life.store.get('role', input.roleId, roleSchema); if (!role) throw new Error('角色不存在'); return detail(input.roleId, `role:${input.roleId}`, asJson(role)); }
     case 'events': {
       const input = z.object({ roleId: z.string().optional(), limit: pageSchemaFields.limit, before: z.number().int().positive().optional() }).strict().parse(value ?? {});
       const rows = life.store.events(input.roleId, input.limit + 1, input.before);
@@ -69,15 +69,19 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
       return detail(record.roleId, record.id, record);
     }
     case 'session.read': {
-      const input = z.object({ roleId: z.string(), seq: z.number().int().nonnegative() }).strict().parse(value); const role = life.store.role(input.roleId);
-      const result = await life.context.sessionQuery.readEvent({ sessionId: SessionId(role.sessionId), seq: SessionSeq(input.seq), before: 0, after: 0 });
-      return detail(input.roleId, `session:${role.sessionId}:${input.seq}`, asJson(result.target));
+      const input = z.object({ roleId: z.string(), sessionId: z.string().optional(), seq: z.number().int().nonnegative() }).strict().parse(value); const role = life.store.get('role', input.roleId, roleSchema);
+      if (!role) throw new Error('角色不存在'); const sessionId = input.sessionId ?? role.sessionId;
+      if (sessionId !== role.sessionId && life.store.meta(`session-owner:${sessionId}`) !== input.roleId) throw new Error('会话不存在或属于其他角色');
+      const result = await life.context.sessionQuery.readEvent({ sessionId: SessionId(sessionId), seq: SessionSeq(input.seq), before: 0, after: 0 });
+      return detail(input.roleId, `session:${sessionId}:${input.seq}`, asJson(result.target));
     }
     case 'session.records': {
-      const input = z.object({ roleId: z.string(), ...pageSchemaFields }).strict().parse(value); const role = life.store.role(input.roleId);
-      const records = await life.context.sessionQuery.listEvents(SessionId(role.sessionId));
+      const input = z.object({ roleId: z.string(), sessionId: z.string().optional(), ...pageSchemaFields }).strict().parse(value); const role = life.store.get('role', input.roleId, roleSchema);
+      if (!role) throw new Error('角色不存在'); const sessionId = input.sessionId ?? role.sessionId;
+      if (sessionId !== role.sessionId && life.store.meta(`session-owner:${sessionId}`) !== input.roleId) throw new Error('会话不存在或属于其他角色');
+      const records = await life.context.sessionQuery.listEvents(SessionId(sessionId));
       const rows = records.filter(record => record.seq >= input.cursor);
-      return asJson({ items: rows.slice(0, input.limit), nextCursor: rows.length > input.limit ? Number(rows[input.limit - 1]!.seq) + 1 : null });
+      return asJson({ items: rows.slice(0, input.limit).map(record => ({ ...record, sessionId })), nextCursor: rows.length > input.limit ? Number(rows[input.limit - 1]!.seq) + 1 : null });
     }
     case 'payload.read': { const input = payloadReadSchema.extend({ roleId: z.string() }).strict().parse(value); return life.context.kwMind.payloads.read(input.roleId, { id: input.id, offset: input.offset, limit: input.limit }); }
     case 'payload.links': {
@@ -92,7 +96,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
     case 'activity.read': {
       const input = z.object({ roleId: z.string(), id: z.string(), ...pageSchemaFields }).strict().parse(value); const activity = life.store.get('activity', input.id, activitySchema);
       if (!activity || activity.roleId !== input.roleId) throw new Error('活动不存在或属于其他角色'); const rows = life.store.links(input.id, input.limit + 1, input.cursor);
-      return { activity: asJson(activity), items: preview(rows.slice(0, input.limit)), nextCursor: rows.length > input.limit ? input.cursor + input.limit : null };
+      return { activity: asJson(activity), items: preview(rows.slice(0, input.limit).map(row => row && typeof row === 'object' && !Array.isArray(row) ? { ...row, sessionId: activity.sessionId } : row)), nextCursor: rows.length > input.limit ? input.cursor + input.limit : null };
     }
     case 'records.list': {
       const input = z.object({ kind: z.enum(['role', 'plan', 'extension', 'operation']), roleId: z.string().optional(), ...pageSchemaFields }).strict().parse(value);
@@ -128,7 +132,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
     }
     case 'source.read': {
       const input = z.object({ roleId: z.string(), id: z.string() }).strict().parse(value); let source: Json;
-      if (input.id === `role:${input.roleId}`) source = asJson(life.store.role(input.roleId));
+      if (input.id === `role:${input.roleId}`) { const role = life.store.get('role', input.roleId, roleSchema); if (!role) throw new Error('角色不存在'); source = asJson(role); }
       else {
         const operation = life.store.get('operation', input.id, operationSchema);
         if (operation) { if (operation.roleId !== input.roleId) throw new Error('来源属于其他角色'); source = asJson(operation); }

@@ -10,7 +10,7 @@ import {
 } from './types.ts';
 import type { EventInput, Experience, Extension, Json, LifePlan, Media, Memory, MemoryInput, Operation, Recall, Revision, Role, RoleInput } from './types.ts';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 type Row = Record<string, unknown>;
 function decode<T>(row: Row | undefined, schema: z.ZodType<T>): T | undefined {
   if (!row) return undefined;
@@ -52,6 +52,13 @@ export class Store {
       CREATE INDEX IF NOT EXISTS continuity_kind ON documents(role_id,json_extract(body,'$.data.kind'),updated_at,id) WHERE kind='continuity';
       CREATE INDEX IF NOT EXISTS continuity_scene ON documents(role_id,json_extract(body,'$.data.context.scene'),json_extract(body,'$.data.context.peerId')) WHERE kind='continuity';
       PRAGMA user_version=3;
+      COMMIT;
+    `);
+    if (version === 3) this.db.prepare('VACUUM INTO ?').run(`${path}.schema3-${Date.now()}-${randomUUID()}.sqlite`);
+    if (version < 4) this.db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE INDEX IF NOT EXISTS live_roles ON documents(updated_at,id) WHERE kind='role' AND json_extract(body,'$.deletedAt') IS NULL;
+      PRAGMA user_version=4;
       COMMIT;
     `);
   }
@@ -110,9 +117,10 @@ export class Store {
     return decode(this.db.prepare('SELECT body FROM documents WHERE kind=? AND id=?').get(kind, id), schema);
   }
   list<T>(kind: string, schema: z.ZodType<T>, roleId?: string, limit = 100, offset = 0): T[] {
+    const live = kind === 'role' ? " AND json_extract(body,'$.deletedAt') IS NULL" : '';
     const rows = roleId === undefined
-      ? this.db.prepare('SELECT body FROM documents WHERE kind=? ORDER BY updated_at DESC,id LIMIT ? OFFSET ?').all(kind, limit, offset)
-      : this.db.prepare('SELECT body FROM documents WHERE kind=? AND role_id=? ORDER BY updated_at DESC,id LIMIT ? OFFSET ?').all(kind, roleId, limit, offset);
+      ? this.db.prepare(`SELECT body FROM documents WHERE kind=?${live} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`).all(kind, limit, offset)
+      : this.db.prepare(`SELECT body FROM documents WHERE kind=? AND role_id=?${live} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`).all(kind, roleId, limit, offset);
     return rows.map(row => schema.parse(JSON.parse(z.string().parse(row.body))));
   }
   put(kind: string, id: string, roleId: string | null, value: Json, expectedRevision: number | null, actor: string, reason: string): void {
@@ -138,21 +146,52 @@ export class Store {
   }
 
   roles(): Role[] { return this.list('role', roleSchema, undefined, 10000); }
-  role(id: string): Role { const role = this.get('role', id, roleSchema); if (!role) throw new Error(`角色不存在：${id}`); return role; }
+  role(id: string): Role { const role = this.get('role', id, roleSchema); if (!role || role.deletedAt) throw new Error(`角色不存在或已删除：${id}`); return role; }
   createRole(input: RoleInput): Role {
     const parsed = roleInputSchema.parse(input);
     const stamp = now();
     const role = roleSchema.parse({ ...parsed, persona: parsed.persona ?? parsed.initialPersona, selfState: parsed.selfState ?? '', sessionId: `kw-${parsed.id}-${randomUUID()}`, revision: 1, createdAt: stamp, updatedAt: stamp });
     this.validateBindings(role);
-    this.put('role', role.id, role.id, asJson(role), null, 'owner', '创建角色');
+    this.transaction(() => { this.put('role', role.id, role.id, asJson(role), null, 'owner', '创建角色'); this.setMeta(`session-owner:${role.sessionId}`, role.id); this.setMeta('roles-generation', String(Number(this.meta('roles-generation') ?? 0) + 1)); });
     return role;
   }
   updateRole(id: string, patch: Partial<Role>, expectedRevision: number, actor: string, reason: string): Role {
     const current = this.role(id);
-    const role = roleSchema.parse({ ...current, ...patch, id, accountId: current.accountId, sessionId: current.sessionId, initialPersona: current.initialPersona, revision: expectedRevision + 1, updatedAt: now() });
+    const role = roleSchema.parse({ ...current, ...patch, id, accountId: current.accountId, sessionId: current.sessionId, deletedAt: current.deletedAt, initialPersona: current.initialPersona, revision: expectedRevision + 1, updatedAt: now() });
     this.validateBindings(role);
     this.put('role', id, id, asJson(role), expectedRevision, actor, reason);
     return role;
+  }
+  rotateRoleSession(id: string, sessionId: string, expectedRevision: number, accepted: string[], reason: string): Role {
+    return this.transaction(() => {
+      const role = this.role(id);
+      const owner = this.meta(`session-owner:${sessionId}`);
+      if (sessionId === role.sessionId || owner && owner !== id) throw new Error('新会话标识无效或已经属于其他角色');
+      const changed = roleSchema.parse({ ...role, sessionId, revision: expectedRevision + 1, updatedAt: now() });
+      this.put('role', id, id, asJson(changed), expectedRevision, 'owner', reason);
+      this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state IN ('prepared','delivered') AND message_id IN (SELECT value FROM json_each(?))").run(now(), id, JSON.stringify(accepted));
+      this.recoverDeliveries(id, []);
+      // 新会话重新装配未接纳输入，旧感知正文继续保留审计。
+      this.db.prepare("UPDATE event_delivery SET message_id=?||message_id,updated_at=? WHERE state='prepared' AND event_id IN (SELECT id FROM events WHERE role_id=?)").run(`reset:${sessionId}:`, now(), id);
+      this.setMeta(`session-owner:${role.sessionId}`, id);
+      this.setMeta(`session-owner:${sessionId}`, id);
+      this.setMeta(`context-since:${id}`, String(this.db.prepare('SELECT coalesce(max(seq),0) seq FROM events WHERE role_id=?').get(id)!.seq));
+      this.setMeta(`context-since-time:${id}`, now());
+      this.setMeta(`wake:${id}`, '');
+      this.setMeta(`activity:${id}`, '');
+      this.appendEvent({ id: `reset:${sessionId}`, accountId: role.accountId, roleId: id, source: 'system', type: 'session-reset', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: { previousSessionId: role.sessionId, sessionId, reason, instruction: '当前对话已切换至新会话。保留原有人格、长期记忆和角色安排；结合待处理事件决定接下来的活动。历史工具操作不自动重放。' } });
+      return changed;
+    });
+  }
+  deleteRole(id: string, expectedRevision: number): Role {
+    return this.transaction(() => {
+      const role = this.role(id);
+      const deleted = roleSchema.parse({ ...role, state: 'stopped', groups: [], contacts: [], globalGroups: false, defaultPrivate: false, deletedAt: now(), revision: expectedRevision + 1, updatedAt: now() });
+      this.put('role', id, id, asJson(deleted), expectedRevision, 'owner', '删除角色，保留历史归属');
+      this.setMeta('roles-generation', String(Number(this.meta('roles-generation') ?? 0) + 1));
+      this.setMeta(`wake:${id}`, '');
+      return deleted;
+    });
   }
   private validateBindings(role: Role): void {
     if (new Set(role.groups).size !== role.groups.length || new Set(role.contacts).size !== role.contacts.length) throw new Error('绑定列表中存在重复标识');
@@ -222,7 +261,7 @@ export class Store {
   }
   completeDelivered(roleId: string, accepted: string[]): void { this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted)); this.touch(); }
   recoverDeliveries(roleId: string, accepted: string[]): void {
-    this.db.prepare("UPDATE event_delivery SET state='prepared',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state!='prepared' AND message_id NOT LIKE 'filtered:%' AND message_id NOT IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted));
+    this.db.prepare("UPDATE event_delivery SET state='prepared',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id NOT LIKE 'filtered:%' AND message_id NOT IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted));
     this.touch();
   }
   unprocessed(roleId: string, limit = 100): Experience[] { return this.db.prepare('SELECT * FROM events WHERE role_id=? AND consolidated=0 ORDER BY seq LIMIT ?').all(roleId, limit).map(row => this.eventFromRow(row)); }

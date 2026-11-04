@@ -44,5 +44,7 @@ Thumbs.db
 coverage/
 playwright-report/
 test-results/
+.playwright-cli/
+output/playwright/
 *.tsbuildinfo
 *.log

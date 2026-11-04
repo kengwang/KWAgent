@@ -30,7 +30,7 @@ export class Continuity {
     const operation = this.store.get('operation', id, operationSchema);
     if (operation) {
       if (operation.roleId !== roleId) throw new Error('来源属于其他角色');
-      if (/^(continuity_|memory_|self_|life_plan|operation_read|capability_read)/.test(operation.tool)) return 'subjective';
+      if (/^(continuity_|memory_|self_|life_plan|role_lifecycle_|operation_read|capability_read)/.test(operation.tool)) return 'subjective';
       return operation.state === 'succeeded' ? 'observed' : 'unconfirmed';
     }
     if (id === `role:${roleId}`) return 'setting';

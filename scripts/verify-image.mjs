@@ -41,13 +41,20 @@ try {
   const continuity = admin('continuity.revise', { roleId: role.id, expectedRevision: null, data: { kind: 'thread', title: '镜像中的持续事项', content: '验证连续性备份恢复。', sources: [event.id] }, reason: '断网镜像验收' });
   assert.equal(admin('continuity.read', { roleId: role.id, id: continuity.id, raw: true }).revision, 1);
   assert.ok(admin('payload.read', { roleId: role.id, id: source.payloadId }).text.includes(event.id));
+  const reset = admin('role.reset', { id: role.id, expectedRevision: role.revision });
+  assert.notEqual(reset.sessionId, role.sessionId); assert.equal(reset.state, 'disabled');
+  assert.equal(admin('continuity.read', { roleId: role.id, id: continuity.id, raw: true }).revision, 1);
+  const disposable = admin('role.create', { id: 'image-delete', accountId: 'main', name: '镜像删除验收', initialPersona: '保留历史。', provider: 'deepseek-official', model: 'configured-at-deployment' });
+  const deleted = admin('role.delete', { id: disposable.id, expectedRevision: disposable.revision }); assert.ok(deleted.deletedAt);
+  assert.equal(admin('records.list', { kind: 'role' }).items.some(item => item.id === disposable.id), false);
+  assert.ok(admin('persona.read', { roleId: disposable.id }).summary.deletedAt);
   const duplicate = spawnSync(process.execPath, ['scripts/start.mjs'], { encoding: 'utf8', timeout: 10000 });
   assert.notEqual(duplicate.status, 0); assert.match(duplicate.stderr, /ELOCKED/);
   admin('quiesce');
   const backup = admin('backup');
   const restored = spawnSync(process.execPath, ['scripts/admin.mjs', 'restore', backup.directory, '/data/tmp/image-restored'], { encoding: 'utf8', timeout: 20000 }); assert.equal(restored.status, 0, restored.stderr);
   const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
-  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
+  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
   admin('shutdown');
   const result = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error('Harness 未在期限内停止'); })]); assert.equal(result[0], 0);
   console.log(JSON.stringify({ nonRoot: true, node: process.versions.node, harness: true, database: true, payload: true, singleInstance: true, backupRestore: true, noExternalNetwork: true }));

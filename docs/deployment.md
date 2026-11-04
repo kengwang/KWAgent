@@ -21,7 +21,7 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 ```dotenv
 COMPOSE_PROJECT_NAME=kwagent
 COMPOSE_FILE=compose.yml:compose.kwagent.yaml
-KW_IMAGE=ghcr.io/kengwang/kwagent:0.3.0
+KW_IMAGE=ghcr.io/kengwang/kwagent:0.4.0
 KW_DATA_ROOT=./data/agent
 KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
 ```
@@ -38,7 +38,7 @@ docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 
 反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
 
-需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.1ms.run/kengwang/kwagent:0.3.0`，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
+需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.4.0` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
 
 `.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
 
@@ -84,11 +84,13 @@ docker compose exec -T kwagent node scripts/admin.mjs resume
 
 创建角色可以编辑 `deploy/role.example.json`，通过 Panel 或 `node scripts/admin.mjs role.create @deploy/role.example.json` 提交。创建时角色默认未启用，绑定真实群聊或联系人并检查设定后启用。
 
+对话重置、归档后自动创建新会话、删除角色和历史读取见 [角色管理](role-lifecycle.md)。
+
 ## 备份和恢复
 
 每天按配置时间创建备份，保留期限由 `KW_BACKUP_KEEP_DAYS` 指定。完整备份包含数据库、Session、工作目录、扩展、媒体和 `artifacts/` 负载对象，以及版本清单与校验和。
 
-v0.3.0 启动时将数据库升级到 Schema 3，并在迁移前保存原 Schema 1/2 的 SQLite 快照。正常升级先执行完整备份。连续性资料、来源、修订和计划关联保存在同一数据库；负载对象保持完整备份。新建对象目录使用 UID/GID 10001 和私有权限；全部中间文件继续写入 `/data/tmp`。
+v0.4.0 启动时将数据库升级到 Schema 4，并在迁移前保存原 Schema 1/2/3 的 SQLite 快照。正常升级先执行完整备份。连续性资料、角色删除标记、来源、修订和计划关联保存在同一数据库；负载对象保持完整备份。新建对象目录使用 UID/GID 10001 和私有权限；全部中间文件继续写入 `/data/tmp`。
 
 停止应用后，恢复到独立目录：
 

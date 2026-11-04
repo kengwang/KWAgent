@@ -30,6 +30,9 @@ import { preparePerception } from './perception.ts';
 import { Activities, activitySchema } from './activities.ts';
 import { APP_VERSION } from '@kwagent/core';
 import { registerRolePreset } from './preset.ts';
+import { RoleLifecycle } from './lifecycle.ts';
+import { workspaceDomainState } from '@deepseek-ai/dsh-workspace';
+import type {} from '@deepseek-ai/dsh-storage-domain';
 
 export { Plans, planRequestSchema, timingSchema } from './plans.ts';
 export { Extensions, extensionRequestSchema } from './extensions.ts';
@@ -48,6 +51,7 @@ export class Life extends Service {
   readonly extensions: Extensions;
   readonly operations: Operations;
   readonly activities: Activities;
+  readonly lifecycle: RoleLifecycle;
   readonly store: Store;
   readonly config: AppConfig;
   maintenance = false;
@@ -82,6 +86,7 @@ export class Life extends Service {
     this.extensions = new Extensions(ctx.kwMind.store, ctx.kwMind.config.dataRoot, ctx);
     this.operations = new Operations(this);
     this.activities = new Activities(this.store);
+    this.lifecycle = new RoleLifecycle(this);
   }
   get context() { return this.ctx; }
   track<T>(promise: Promise<T>, roleId?: string): void {
@@ -103,7 +108,11 @@ export class Life extends Service {
     this.started = true;
     this.startupError = null;
     this.extensions.recoverProfile();
+    await this.lifecycle.recover();
+    await this.repairArchivedSessions();
     for (const role of this.store.roles()) {
+      this.store.setMeta(`session-owner:${role.sessionId}`, role.id);
+      if (this.lifecycle.phase(role.id)) continue;
       await this.syncContinuity(role.id);
       if (role.state === 'active') {
         try { await this.ensure(role.id); await this.plans.reconcileRole(role.id); this.enqueue(role.id); }
@@ -135,6 +144,7 @@ export class Life extends Service {
     this.continuityWork.set(roleId, task); return task;
   }
   async update(id: string, patch: Partial<Role>, expected: number): Promise<Role> {
+    this.lifecycle.assertAvailable(id);
     const previous = this.store.role(id);
     const role = this.store.updateRole(id, { ...patch, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
     if (role.state !== previous.state) await this.control(id, role.state, false);
@@ -143,6 +153,7 @@ export class Life extends Service {
     return this.store.role(id);
   }
   async control(roleId: string, state: Role['state'], save = true): Promise<Role> {
+    this.lifecycle.assertAvailable(roleId);
     let role = this.store.role(roleId);
     if (save) role = this.store.updateRole(roleId, { state }, role.revision, 'owner', `设置角色状态：${state}`);
     if (state === 'active') {
@@ -165,12 +176,41 @@ export class Life extends Service {
     }
     return role;
   }
-  ensure(roleId: string): Promise<AgentHandle> {
+  ensure(roleId: string, recoverArchived = true): Promise<AgentHandle> {
+    const role = this.store.role(roleId);
+    if (recoverArchived) {
+      this.lifecycle.assertAvailable(roleId);
+      if (this.ctx.workspaceRegistry.archivedSessionIds.includes(SessionId(role.sessionId))) return this.lifecycle.archived(roleId, role.sessionId).then(() => this.ensure(roleId));
+    }
     const live = this.handles.get(roleId); if (live) return Promise.resolve(live);
     const pending = this.creating.get(roleId); if (pending) return pending;
     const promise = this.createAgent(roleId).finally(() => this.creating.delete(roleId));
     this.creating.set(roleId, promise);
     return promise;
+  }
+  async repairArchivedSessions(): Promise<void> {
+    for (const role of this.store.roles()) if (!this.lifecycle.phase(role.id) && this.ctx.workspaceRegistry.archivedSessionIds.includes(SessionId(role.sessionId))) {
+      try { await this.lifecycle.archived(role.id, role.sessionId); } catch (error) { this.fail(error, role.id); }
+    }
+  }
+  async retireRole(roleId: string): Promise<void> {
+    const timer = this.timers.get(roleId); if (timer) clearTimeout(timer); this.timers.delete(roleId);
+    this.dispatchAbort.get(roleId)?.abort(); this.stopping.get(roleId)?.abort();
+    await this.creating.get(roleId);
+    const handle = this.handles.get(roleId);
+    const role = this.store.role(roleId);
+    for (const job of this.jobs.list(SessionId(role.sessionId))) if (job.owner === role.sessionId && ['running', 'stopping'].includes(job.status)) this.jobs.kill(job.id, SessionId(role.sessionId), '角色会话管理');
+    if (handle) {
+      for (const message of [...handle.agent.inbox.nextTurn, ...handle.agent.inbox.nextStep]) if (!['kw-event', 'compact-checkpoint', 'model-selection'].includes(String(message.source.kind))) this.store.appendEvent({ id: `deferred:${message.id}`, accountId: role.accountId, roleId, source: String(message.source.kind) === 'schedule' ? 'schedule' : 'system', type: 'deferred-input', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(message) });
+      handle.agent.cancel({ kind: 'hook', reason: '角色会话管理' }, { keepInbox: true });
+      await handle.agent.whenIdle();
+      await this.extensions.suspend(roleId);
+      await this.sessions.flush(handle.agent.session);
+      await handle.dispose(); this.handles.delete(roleId);
+    }
+    // 投递可能正在等待本次会话切换；取消信号会在它写入 Agent 前拦截。
+    await this.continuityWork.get(roleId);
+    this.contexts.delete(roleId); this.scenes.delete(roleId); this.ctx.kwMind.steps.delete(roleId); this.activities.release(roleId);
   }
   private async createAgent(roleId: string): Promise<AgentHandle> {
     await (this.presetTask ??= registerRolePreset(this.ctx));
@@ -271,7 +311,7 @@ export class Life extends Service {
         try {
         if (event.type === 'agent/inbox/spliced') queueMicrotask(() => { if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) this.stopping.get(roleId)?.abort(); });
         this.activities.event(roleId, role.sessionId, event);
-        if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
+        if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${role.sessionId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
         if (event.type === 'job/settled') {
           const experience = this.store.appendEvent({ id: `job:${roleId}:${event.data.jobId}:settled`, accountId: role.accountId, roleId, source: 'system', type: 'background-complete', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(event.data) });
           if (experience.inserted) this.enqueue(roleId);
@@ -300,6 +340,7 @@ export class Life extends Service {
   private day(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: this.config.timeZone }).format(new Date()); }
   admission(roleId: string): string | null {
     if (this.closing || this.maintenance) return 'maintenance';
+    if (this.lifecycle.phase(roleId)) return this.lifecycle.phase(roleId)!;
     const role = this.store.role(roleId);
     if (role.state !== 'active') return role.state;
     if (this.runtime.get(roleId)?.state === 'error') return 'error';
@@ -397,22 +438,23 @@ export class Life extends Service {
   }
   private async hold(): Promise<void> {
     await this.operations.drain();
+    await this.lifecycle.whenIdle();
     await this.plans.suspend();
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     for (const controller of this.dispatchAbort.values()) controller.abort();
     await Promise.allSettled([...this.dispatchWork.values()]);
     for (const role of this.store.roles()) {
-      for (const job of this.jobs.list(SessionId(role.sessionId))) this.jobs.kill(job.id, SessionId(role.sessionId), '服务器维护');
+      for (const job of this.jobs.list(SessionId(role.sessionId))) if (job.owner === role.sessionId && ['running', 'stopping'].includes(job.status)) this.jobs.kill(job.id, SessionId(role.sessionId), '服务器维护');
     }
     for (const [roleId, handle] of this.handles) { if (handle.agent.status === 'running') this.store.setMeta(`wake:${roleId}`, 'pending'); handle.agent.cancel({ kind: 'hook', reason: '服务器维护' }, { keepInbox: true }); }
     await Promise.all([...this.handles.values()].map(async handle => { await handle.agent.whenIdle(); await this.sessions.flush(handle.agent.session); }));
     await this.extensions.close();
   }
-  async resume(): Promise<void> { if (this.closing) return; await this.maintenanceTask; this.maintenanceTask = undefined; this.maintenance = false; await this.plans.resume(); for (const role of this.store.roles()) if (role.state === 'active') { const handle = await this.ensure(role.id); await this.extensions.restore(role.id, handle.agent.ctx); this.enqueue(role.id); } }
+  async resume(): Promise<void> { if (this.closing) return; await this.maintenanceTask; this.maintenanceTask = undefined; this.maintenance = false; await this.repairArchivedSessions(); await this.plans.resume(); for (const role of this.store.roles()) if (role.state === 'active') { const handle = await this.ensure(role.id); await this.extensions.restore(role.id, handle.agent.ctx); this.enqueue(role.id); } }
   snapshot(roleId?: string): Json {
     const preview = <T>(items: T[]) => items.slice(0, 50).map(item => summary(item, this.config.budgets.panelBodyBytes));
-    const value = { revision: this.store.revision(), version: APP_VERSION, maintenance: this.maintenance, started: this.started, startupError: this.startupError,
+    const value = { revision: this.store.revision(), rolesGeneration: Number(this.store.meta('roles-generation') ?? 0), version: APP_VERSION, maintenance: this.maintenance, started: this.started, startupError: this.startupError,
       roles: preview(this.store.roles().sort((a, b) => Number(b.id === roleId) - Number(a.id === roleId)).map(role => ({ ...role, runtime: this.runtime.get(role.id) ?? { state: role.state, error: null, lastActivityAt: null }, usage: this.store.usage(role.id, this.day()) }))),
       activities: preview(this.store.list('activity', activitySchema, roleId, 50)), events: preview(this.store.events(roleId, 50).map(event => ({ ...event, delivery: this.store.deliveryStatus(event.id) }))), memories: preview(roleId ? this.store.memories(roleId, 50) : []), plans: preview(this.store.plans(roleId)), operations: preview(this.store.operations(roleId, 50)),
       extensions: preview(this.store.extensions(roleId)), connections: { mcp: this.ctx.kwLagrange.client.status, events: this.ctx.kwLagrange.events.status }, config: publicConfig(this.config), truncated: false };
@@ -436,7 +478,7 @@ export class Life extends Service {
 }
 
 export const name = 'kw-life';
-export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'skills', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'appReady', 'appExit'];
+export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'skills', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'workspaceRegistry', 'appReady', 'appExit'];
 export async function apply(ctx: Context): Promise<void> {
   const skillPath = fileURLToPath(new URL('../skills/kwagent-life/SKILL.md', import.meta.url));
   ctx.skills.register({ name: 'kwagent-life', description: 'KWAgent 初始化、实时交流、记忆与连续性参数、来源及生活安排。初始化和使用内部工具时读取。', content: await readFile(skillPath, 'utf8'), source: 'runtime', path: skillPath, resourceBase: { kind: 'directory', path: fileURLToPath(new URL('../skills/kwagent-life/', import.meta.url)) } });
@@ -468,9 +510,21 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.effect(() => () => lagrange.received.off('event', listener), 'kw-life.events');
   ctx.effect(() => () => life.close(), 'kw-life.lifecycle');
   await life.operations.start();
+  ctx.on('domain/changed', change => {
+    if (!life.started || life.maintenance || change.domain !== 'workspace' || change.table !== '' || change.operation !== 'put') return;
+    const archived = workspaceDomainState.parse(change.value).archivedSessionIds;
+    for (const role of life.store.roles()) if (!life.lifecycle.phase(role.id) && archived.includes(SessionId(role.sessionId))) life.track(life.lifecycle.archived(role.id, role.sessionId), role.id);
+  });
   ctx.on('schedule/resolve-agent', async (sessionId, next) => {
-    const role = life.store.roles().find(role => role.sessionId === sessionId);
-    if (!role) return next();
+    const id = life.store.roles().find(role => role.sessionId === sessionId)?.id ?? life.store.meta(`session-owner:${sessionId}`);
+    if (!id) return next();
+    const role = life.store.role(id);
+    if (role.sessionId !== sessionId) throw new CapabilityError('原会话的定时唤醒已经失效');
+    if (life.admission(id)) throw new CapabilityError('角色当前不接纳定时唤醒');
+    if (life.context.workspaceRegistry.archivedSessionIds.includes(SessionId(role.sessionId))) {
+      life.track(life.lifecycle.archived(role.id, role.sessionId), role.id);
+      throw new CapabilityError('旧会话已归档，角色正在准备新会话');
+    }
     return (await life.ensure(role.id)).agent;
   });
   ctx.effect(() => ctx.appReady!.onReady(() => life.track(life.start())), 'kw-life.startup');

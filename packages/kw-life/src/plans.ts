@@ -43,7 +43,10 @@ export class Plans {
     await previous;
     try { return await action(); } finally { release(); }
   }
-  mutate(roleId: string, request: PlanRequest): Promise<LifePlan[] | LifePlan> { return this.exclusive(() => this.change(roleId, planRequestSchema.parse(request))); }
+  mutate(roleId: string, request: PlanRequest): Promise<LifePlan[] | LifePlan> { return this.exclusive(() => {
+    if (this.store.meta(`lifecycle:${roleId}`)) throw new Error('角色正在管理会话，暂时不能修改计划');
+    return this.change(roleId, planRequestSchema.parse(request));
+  }); }
   private async change(roleId: string, input: PlanRequest): Promise<LifePlan[] | LifePlan> {
     if (input.action === 'list') return this.store.plans(roleId);
     const role = this.store.role(roleId);
@@ -121,6 +124,16 @@ export class Plans {
     }
   }
   async pause(roleId: string): Promise<void> { await this.reconcileRole(roleId); }
+  detachSession(roleId: string, id: string): Promise<void> {
+    return this.exclusive(async () => {
+      const sessionId = SessionId(id);
+      for (const task of await this.schedule.list({ sessionId })) await this.schedule.delete({ sessionId, id: task.id });
+      for (const plan of this.store.plans(roleId)) if (plan.kind === 'time' && ['active', 'pending'].includes(plan.status)) this.store.savePlan({ ...plan, status: 'paused', scheduleId: null, revision: plan.revision + 1, updatedAt: now() }, plan.revision, 'system');
+    });
+  }
+  cancelRole(roleId: string): Promise<void> {
+    return this.exclusive(async () => { for (const plan of this.store.plans(roleId)) if (!['cancelled', 'completed'].includes(plan.status)) this.store.savePlan({ ...plan, status: 'cancelled', scheduleId: null, revision: plan.revision + 1, updatedAt: now() }, plan.revision, 'owner'); });
+  }
   suspend(): Promise<void> { return this.exclusive(async () => { this.suspended = true; for (const role of this.store.roles()) await this.reconcile(role.id); }); }
   resume(): Promise<void> { return this.exclusive(async () => { this.suspended = false; for (const role of this.store.roles()) await this.reconcile(role.id); }); }
   filterNotices(roleId: string, notices: ScheduleNotice[], inputId: string): Promise<ScheduleNotice[]> {

@@ -23,6 +23,7 @@ export const roleSchema = z.object({
   personaSources: z.array(z.string()).default([]),
   provider: z.string().min(1), model: z.string().min(1),
   state: desiredStateSchema.default('disabled'), revision: z.number().int().positive().default(1),
+  deletedAt: z.string().nullable().default(null),
   sessionId: z.string().min(1), groups: z.array(z.number().int().positive()).default([]),
   contacts: z.array(z.number().int().positive()).default([]),
   globalGroups: z.boolean().default(false), defaultPrivate: z.boolean().default(false),
@@ -33,7 +34,7 @@ export const roleSchema = z.object({
   createdAt: z.string(), updatedAt: z.string(),
 });
 export type Role = z.infer<typeof roleSchema>;
-export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true, personaSources: true })
+export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true, personaSources: true, deletedAt: true })
   .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
 export type RoleInput = z.infer<typeof roleInputSchema>;
 

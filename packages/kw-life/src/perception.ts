@@ -7,7 +7,7 @@ export async function preparePerception(store: Store, payloads: Payloads, roleId
   const saved = store.frame(messageId);
   if (saved !== undefined) { const frame = perceptionFrameSchema.parse(saved); if (frame.roleId !== roleId) throw new Error('感知批次属于其他角色'); return freezeJson(frame); }
   const scenes = events.filter(event => event.scene && event.peerId !== null).map(event => `${event.scene}:${event.peerId}`);
-  const recent = store.db.prepare("SELECT id FROM events WHERE role_id=? AND id NOT IN (SELECT value FROM json_each(?)) AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY occurred_at DESC,seq DESC LIMIT 20").all(roleId, JSON.stringify(events.map(event => event.id)), scenes.length, JSON.stringify(scenes)).map(row => store.event(String(row.id)));
+  const recent = store.db.prepare("SELECT id FROM events WHERE role_id=? AND seq>? AND id NOT IN (SELECT value FROM json_each(?)) AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY occurred_at DESC,seq DESC LIMIT 20").all(roleId, Number(store.meta(`context-since:${roleId}`) ?? 0), JSON.stringify(events.map(event => event.id)), scenes.length, JSON.stringify(scenes)).map(row => store.event(String(row.id)));
   const id = `frame-${createHash('sha256').update(messageId).digest('hex')}`;
   const normalize = (items: Experience[]) => conversationOrder(items).map(event => normalizeExperience(store, event));
   const full = asJson({ current: normalize(events), recent: normalize(recent) });

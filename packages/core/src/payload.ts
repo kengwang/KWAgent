@@ -5,7 +5,7 @@ import { isUtf8 } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Store } from './store.ts';
-import { now, asJson, toolConversation, type Json, type Operation } from './types.ts';
+import { now, asJson, roleSchema, toolConversation, type Json, type Operation } from './types.ts';
 import { fitText, readable, tokens } from './budget.ts';
 
 export const payloadReadSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(4).max(65536).default(4096) }).strict();
@@ -52,7 +52,8 @@ export class Payloads {
   }
   async put(roleId: string, source: string, value: Json, signal?: AbortSignal): Promise<PayloadRef> {
     try {
-    this.store.role(roleId); signal?.throwIfAborted();
+    if (!this.store.get('role', roleId, roleSchema)) throw new Error('负载所属角色不存在');
+    signal?.throwIfAborted();
     const body = JSON.stringify(value); const bytes = Buffer.byteLength(body); const id = createHash('sha256').update(body).digest('hex');
     const path = this.path(id); await mkdir(join(this.directory, id.slice(0, 2)), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.partial`;

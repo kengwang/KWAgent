@@ -113,7 +113,7 @@ test('Schema 2迁移保存一致快照，连续性重新打开后保持版本与
   const path = store.path; const record = module.revise('alice', request({ ...base, kind: 'thread' }));
   store.db.exec('DROP TABLE continuity_sources; DROP INDEX continuity_kind; DROP INDEX continuity_scene; PRAGMA user_version=2'); store.close();
   const migrated = new Store(path);
-  try { assert.equal(migrated.db.prepare('PRAGMA user_version').get()?.user_version, 3); const snapshot = readdirSync(root).find(name => name.includes('.schema2-')); assert.ok(snapshot); const db = new DatabaseSync(join(root, snapshot)); assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 2); db.close(); assert.equal(new Continuity(migrated, new Payloads(migrated, join(root, 'artifacts')), loadConfig({})).read('alice', record.id).revision, 1); } finally { migrated.close(); }
+  try { assert.equal(migrated.db.prepare('PRAGMA user_version').get()?.user_version, 4); const snapshot = readdirSync(root).find(name => name.includes('.schema2-')); assert.ok(snapshot); const db = new DatabaseSync(join(root, snapshot)); assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 2); db.close(); assert.equal(new Continuity(migrated, new Payloads(migrated, join(root, 'artifacts')), loadConfig({})).read('alice', record.id).revision, 1); } finally { migrated.close(); }
 });
 test('失败媒体与PTC父结果保留未确认语义，时间比较接受不同时区', () => {
   const { store, module, base, request } = environment();

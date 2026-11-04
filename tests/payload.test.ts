@@ -32,7 +32,7 @@ test('Schema 1 自动快照、分片完成检查和不可变感知内容', () =>
   let store = new Store(path); store.db.exec('DROP TABLE payloads; DROP TABLE perception_frames; DROP TABLE activity_links; DROP TABLE consolidation_chunks; PRAGMA user_version=1'); store.close();
   store = new Store(path);
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version, 3);
+    assert.equal(store.db.prepare('PRAGMA user_version').get()?.user_version, 4);
     const snapshot = readdirSync(root).find(name => name.includes('.schema1-')); assert.ok(snapshot);
     const db = new DatabaseSync(join(root, snapshot)); assert.equal(db.prepare('PRAGMA user_version').get()?.user_version, 1); db.close();
     const event = store.appendEvent({ accountId: 'main', roleId: 'alice', source: 'manual', type: 'test', occurredAt: new Date().toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: 'long' }).event;

@@ -57,6 +57,8 @@ export class Operations {
         const input = z.object({ id: z.string(), state: roleSchema.shape.state }).parse(value);
         return asJson(await life.control(input.id, input.state));
       }
+      case 'role.reset': { const input = z.object({ id: z.string(), expectedRevision: z.number().int().positive() }).strict().parse(value); return asJson(await life.lifecycle.reset(input.id, input.expectedRevision)); }
+      case 'role.delete': { const input = z.object({ id: z.string(), expectedRevision: z.number().int().positive() }).strict().parse(value); return asJson(await life.lifecycle.remove(input.id, input.expectedRevision)); }
       case 'event': { const input = z.object({ roleId: z.string(), text: z.string().min(1), context: z.object({ scene: z.enum(['group', 'private']), peerId: z.number().int().positive() }).optional(), sender: z.object({ id: z.number().int().positive(), nickname: z.string().optional() }).optional() }).strict().parse(value); return asJson(life.manual(input.roleId, input.text, 'manual', input)); }
       case 'continuity.revise': { const input = continuityRequestSchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input; const record = life.context.kwMind.continuity.revise(roleId, request, 'owner'); await life.syncContinuity(roleId); return asJson(record); }
       case 'events.transfer': { const input = z.object({ ids: z.array(z.string()).min(1).max(500), targetRoleId: z.string() }).parse(value); life.store.migrateEvents(input.ids, input.targetRoleId); return { transferred: input.ids.length }; }

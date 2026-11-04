@@ -12,6 +12,12 @@ export class Activities {
   private readonly repeated = new Map<string, { signature: string; result: string; count: number; warned: boolean }>();
   private readonly nestedRoots = new Set<string>();
   constructor(readonly store: Store) {}
+  release(roleId: string): void {
+    const activity = this.current(roleId); if (activity?.state === 'running') this.save({ ...activity, state: 'interrupted', endedAt: now() });
+    this.store.setMeta(`activity:${roleId}`, ''); this.accepted.delete(roleId);
+    for (const key of this.repeated.keys()) if (key.startsWith(`${roleId}:`)) this.repeated.delete(key);
+    for (const key of this.nestedRoots) if (key.startsWith(`${roleId}:`)) this.nestedRoots.delete(key);
+  }
   current(roleId: string): Activity | undefined { const id = this.store.meta(`activity:${roleId}`); return id ? this.store.get('activity', id, activitySchema) : undefined; }
   private save(value: Activity): void { this.store.put('activity', value.id, value.roleId, asJson({ ...value, revision: value.revision + 1 }), value.revision, 'system', '活动状态变化'); }
   event(roleId: string, sessionId: string, event: SessionEvent): void {
