@@ -16,7 +16,9 @@ import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
 import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store, ContinuityScene } from '@kwagent/core';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import type {} from '@deepseek-ai/dsh-skill';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -61,6 +63,7 @@ export class Life extends Service {
   private readonly toolViews = new Map<string, Json>();
   private readonly dispatchAbort = new Map<string, AbortController>();
   private readonly dispatchWork = new Map<string, Promise<void>>();
+  private readonly stopping = new Map<string, AbortController>();
   private closing = false;
   private startTask?: Promise<void>;
   private closeTask?: Promise<void>;
@@ -182,6 +185,7 @@ export class Life extends Service {
       registerTool(agentCtx, 'life_plan', '管理自己的目标、条件事项和唤醒安排。可以自行创建、修改、完成或取消。', planRequestSchema, input => this.plans.mutate(roleId, input));
       registerTool(agentCtx, 'extension_manage', '使用 Bun 管理自己的 Skill、脚本与 Node ESM 扩展依赖。', extensionRequestSchema, (input, exec) => this.extensions.manage(roleId, input, agentCtx, exec.signal));
       agentCtx.systemPrompt.context({ name: 'kw-life-state', order: 900, required: true, interpolate: false, text: () => this.ctx.kwMind.steps.get(roleId) ?? '' });
+      agentCtx.systemPrompt.section({ name: 'deployment:kwagent-operations', order: 10100, interpolate: false, text: '初始化及使用记忆、连续性、计划工具前，先加载 kwagent-life Skill；已读取后按需查看参考。群聊输入持续到达，新的询问与提及应及时判断，不必先完成初始化探索或整理全部记忆。对外回复通过 Lagrange 消息工具发送，普通 assistant 输出保存在内部活动中。' });
       agentCtx.on('agent/pre-step', async (payload, next) => {
         const reason = this.admission(roleId);
         if (reason) {
@@ -224,7 +228,12 @@ export class Life extends Service {
       agentCtx.tools.guard(() => this.admission(roleId) ?? undefined);
       agentCtx.on('agent/turn-stopping', async payload => {
         if (this.admission(roleId)) return;
-        await this.ctx.kwMind.consolidate(payload.agent, roleId, payload.signal);
+        const controller = new AbortController();
+        this.stopping.set(roleId, controller);
+        try {
+          if (!this.store.pending(roleId, 1).length && !payload.agent.inbox.nextStep.length && !payload.agent.inbox.nextTurn.length) await this.ctx.kwMind.consolidate(payload.agent, roleId, AbortSignal.any([payload.signal, controller.signal]));
+        } catch (error) { if (!controller.signal.aborted || payload.signal.aborted) throw error; }
+        finally { if (this.stopping.get(roleId) === controller) this.stopping.delete(roleId); }
         await this.syncContinuity(roleId);
         this.store.completeDelivered(roleId, [...this.activities.accepted.get(roleId) ?? []]);
         await this.ctx.sessions.flush(payload.agent.session);
@@ -260,6 +269,7 @@ export class Life extends Service {
       });
       agentCtx.on('session/event', (_session, event) => {
         try {
+        if (event.type === 'agent/inbox/spliced') queueMicrotask(() => { if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) this.stopping.get(roleId)?.abort(); });
         this.activities.event(roleId, role.sessionId, event);
         if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
         if (event.type === 'job/settled') {
@@ -313,6 +323,7 @@ export class Life extends Service {
     this.enqueue(event.roleId);
   }
   enqueue(roleId: string): void {
+    if (this.store.pending(roleId, 1).length) this.stopping.get(roleId)?.abort();
     if (this.timers.has(roleId) || this.dispatching.has(roleId) || this.admission(roleId)) return;
     const timer = setTimeout(() => {
       this.timers.delete(roleId);
@@ -425,8 +436,10 @@ export class Life extends Service {
 }
 
 export const name = 'kw-life';
-export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'appReady', 'appExit'];
+export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'skills', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'appReady', 'appExit'];
 export async function apply(ctx: Context): Promise<void> {
+  const skillPath = fileURLToPath(new URL('../skills/kwagent-life/SKILL.md', import.meta.url));
+  ctx.skills.register({ name: 'kwagent-life', description: 'KWAgent 初始化、实时交流、记忆与连续性参数、来源及生活安排。初始化和使用内部工具时读取。', content: await readFile(skillPath, 'utf8'), source: 'runtime', path: skillPath, resourceBase: { kind: 'directory', path: fileURLToPath(new URL('../skills/kwagent-life/', import.meta.url)) } });
   const life = new Life(ctx);
   ctx.kwMind.beforeClose(() => life.close());
   ctx.on('kw-mind/error', (roleId, error) => life.fail(error, roleId));

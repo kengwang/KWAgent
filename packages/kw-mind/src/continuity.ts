@@ -41,8 +41,16 @@ export class Continuity {
     if (event.source === 'media') return /fail|error/.test(event.type) ? 'unconfirmed' : 'observed';
     if (event.type === 'tool-result') {
       const body = event.payload as Record<string, Json>;
-      const result = body.result as Record<string, Json> | null;
+      let result = body.result as Record<string, Json> | null;
       if (body.isError || result?.isError) return 'unconfirmed';
+      if (/^(continuity_|memory_|self_|life_plan|operation_read|capability_read|payload_read|verification_mark)/.test(String(body.name))) return 'subjective';
+      if (body.name === 'skill') return 'setting';
+      if (typeof result?.payloadId === 'string') {
+        const saved = this.payloads.valueSync(roleId, result.payloadId);
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved) || !saved.result || typeof saved.result !== 'object' || Array.isArray(saved.result)) return 'unconfirmed';
+        result = saved.result;
+      }
+      if (result?.isError) return 'unconfirmed';
       const value = result?.value && typeof result.value === 'object' && !Array.isArray(result.value) ? result.value : {};
       if (value.state === 'unknown' || value.state === 'failed') return 'unconfirmed';
       if (typeof value.operationId === 'string') { const actual = this.store.get('operation', value.operationId, operationSchema); if (actual && (actual.roleId !== roleId || actual.state !== 'succeeded')) return 'unconfirmed'; }
@@ -51,7 +59,6 @@ export class Continuity {
         const children = this.store.db.prepare("SELECT id FROM events WHERE role_id=? AND type='tool-result' AND json_extract(payload,'$.parentExecutionId')=?").all(roleId, body.executionId);
         return children.some(child => this.sourceMeaning(roleId, String(child.id), seen) === 'observed') ? 'observed' : 'unconfirmed';
       }
-      if (/^(continuity_|memory_|self_|life_plan|operation_read|capability_read|verification_mark)/.test(String(body.name))) return 'subjective';
       if (result?.payloadId) return 'unconfirmed';
       return 'observed';
     }

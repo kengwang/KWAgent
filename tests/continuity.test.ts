@@ -45,6 +45,24 @@ test('现实活动完成需要实际执行，内部声明与未知操作不能�
     assert.equal(life.id, 'life:alice'); assert.equal(life.data.kind, 'life'); if (life.data.kind === 'life') assert.equal(life.data.emotions[0]!.expiresAt, '2026-11-05T00:00:00.000Z');
   } finally { store.close(); }
 });
+
+test('实际文件读取经负载投影后仍保留观察依据，内部资料读取保持主观语义', async () => {
+  const { store, module, request, base } = environment();
+  try {
+    const path = join(process.cwd(), 'package.json');
+    const observation = { path, text: readFileSync(path, 'utf8') };
+    const content = [{ type: 'text', text: JSON.stringify(observation) }];
+    const result = { isError: false, value: observation, content };
+    const projected = await module.payloads.view('alice', 'file-observation', { isError: false, content, result, arguments: { path } }, 2048);
+    assert.ok(projected && typeof projected === 'object' && !Array.isArray(projected) && typeof projected.payloadId === 'string');
+    const event = store.appendEvent({ accountId: 'main', roleId: 'alice', source: 'tool', type: 'tool-result', occurredAt: '2026-11-04T00:00:00Z', scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: { name: 'read_file', result: projected, isError: false } }).event;
+    assert.equal(module.sourceMeaning('alice', event.id), 'observed');
+    const life = module.revise('alice', request({ ...base, kind: 'life', activity: { title: '读取实际文件', state: 'completed', progress: '已读取 package.json', sources: [event.id] } }));
+    assert.equal(life.data.kind, 'life');
+    const internal = store.appendEvent({ ...event, id: randomUUID(), payload: { name: 'payload_read', result: projected, isError: false } }).event;
+    assert.equal(module.sourceMeaning('alice', internal.id), 'subjective');
+  } finally { store.close(); }
+});
 test('情境选择保留情绪期限、反思期限、表达上限和私聊资料隔离', () => {
   const { store, module, base, request } = environment();
   try {

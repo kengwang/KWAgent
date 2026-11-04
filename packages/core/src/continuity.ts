@@ -6,8 +6,8 @@ const time = z.string().datetime({ offset: true });
 const base = z.object({
   title: z.string().min(1).max(240), content: z.string().min(1), realm: realmSchema.default('real'),
   people: z.array(z.string().regex(/^[1-9][0-9]*$/)).default([]), context: sceneSchema.nullable().default(null),
-  sources: z.array(z.string()).default([]), memories: z.array(z.string()).default([]), plans: z.array(z.string()).default([]),
-  relatedRecords: z.array(z.string()).default([]), applicableAt: time.nullable().default(null), expiresAt: time.nullable().default(null),
+  sources: z.array(z.string()).describe('真实原始事件或操作ID；payloadId和callId不属于来源ID').default([]), memories: z.array(z.string()).describe('已有记忆ID，正文写content，没有关联时为空数组').default([]), plans: z.array(z.string()).describe('已有计划ID，不能填写计划正文；没有关联时为空数组').default([]),
+  relatedRecords: z.array(z.string()).describe('其他已有连续性记录ID').default([]), applicableAt: time.nullable().default(null), expiresAt: time.nullable().default(null),
 });
 export const continuityDataSchema = z.discriminatedUnion('kind', [
   base.extend({ kind: z.literal('life'), status: z.enum(['active', 'archived']).default('active'),

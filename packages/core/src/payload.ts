@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { isUtf8 } from 'node:buffer';
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Store } from './store.ts';
 import { now, asJson, type Json } from './types.ts';
@@ -26,11 +27,19 @@ export class Payloads {
     };
     visit(value); return [...refs.values()];
   }
-  async value(roleId: string, id: string, signal?: AbortSignal): Promise<Json> {
+  private authorizedPath(roleId: string, id: string): string {
     if (!/^[a-f0-9]{64}$/.test(id) || !this.store.db.prepare('SELECT 1 FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(id, roleId)) throw new Error('负载不存在或属于其他角色');
-    const bytes = await readFile(this.path(id), { signal });
+    return this.path(id);
+  }
+  private decode(id: string, bytes: Buffer): Json {
     if (createHash('sha256').update(bytes).digest('hex') !== id) throw new Error('负载校验和不一致');
     return asJson(JSON.parse(bytes.toString('utf8')));
+  }
+  async value(roleId: string, id: string, signal?: AbortSignal): Promise<Json> {
+    return this.decode(id, await readFile(this.authorizedPath(roleId, id), { signal }));
+  }
+  valueSync(roleId: string, id: string): Json {
+    return this.decode(id, readFileSync(this.authorizedPath(roleId, id)));
   }
   async put(roleId: string, source: string, value: Json, signal?: AbortSignal): Promise<PayloadRef> {
     try {

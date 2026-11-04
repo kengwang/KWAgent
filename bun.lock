@@ -45,11 +45,11 @@
     },
     "packages/core": {
       "name": "@kwagent/core",
-      "version": "0.3.0",
+      "version": "0.3.1",
     },
     "packages/kw-bundle": {
       "name": "@kwagent/kw-bundle",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kwagent/kw-lagrange": "workspace:*",
         "@kwagent/kw-life": "workspace:*",
@@ -59,14 +59,14 @@
     },
     "packages/kw-lagrange": {
       "name": "@kwagent/kw-lagrange",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kwagent/core": "workspace:*",
       },
     },
     "packages/kw-life": {
       "name": "@kwagent/kw-life",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kwagent/core": "workspace:*",
         "@kwagent/kw-lagrange": "workspace:*",
@@ -76,14 +76,14 @@
     },
     "packages/kw-mind": {
       "name": "@kwagent/kw-mind",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kwagent/core": "workspace:*",
       },
     },
     "packages/kw-panel": {
       "name": "@kwagent/kw-panel",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@kwagent/core": "workspace:*",
         "@kwagent/kw-life": "workspace:*",

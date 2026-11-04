@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { z } from 'zod';
-import { asJson, CapabilityError, errorText, jsonSchema, now, Store } from '@kwagent/core';
+import { asJson, APP_VERSION, CapabilityError, errorText, jsonSchema, now, Store } from '@kwagent/core';
 import type { AppConfig, Json, Operation, Payloads } from '@kwagent/core';
 import { Capabilities } from './capabilities.ts';
 
@@ -51,7 +51,7 @@ export class MilkyClient {
   payloads?: Payloads;
   previewTokens = 2048;
   readonly capabilities: Capabilities;
-  readonly sdk = new Client({ name: 'kwagent', version: '0.2.0' }, { capabilities: {} });
+  readonly sdk = new Client({ name: 'kwagent', version: APP_VERSION }, { capabilities: {} });
   tools: MilkyTool[] = [];
   selfId = 0;
   status: { state: string; since: string; error: string | null } = { state: 'disconnected', since: now(), error: null };
