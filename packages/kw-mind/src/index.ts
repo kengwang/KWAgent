@@ -74,7 +74,7 @@ export class Mind extends Service {
     const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query, reasoningEffort: reasoningEffort ?? null });
     const assembler = new BlockAssembler();
     try {
-      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, reasoningEffort, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], maxTokens: 4096, signal })) assembler.push(chunk);
+      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, reasoningEffort, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], signal })) assembler.push(chunk);
       if (assembler.finish.kind !== 'stop') throw new Error(`查询扩展未完成：${assembler.finish.kind}`);
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
       const expanded = z.object({ queries: z.array(z.string().min(1).max(80)).max(5) }).parse(JSON.parse(text));
@@ -205,7 +205,7 @@ export class Mind extends Service {
           provider: role.provider, model: role.model, sessionId: agent.session.id,
           reasoningEffort,
           system: instructions,
-          messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input) }] }], maxTokens: 8192, signal,
+          messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input) }] }], signal,
         })) assembler.push(chunk);
         if (assembler.finish.kind !== 'stop') throw new Error(`记忆整理未完成：${assembler.finish.kind}`);
         const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');

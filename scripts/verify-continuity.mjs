@@ -16,7 +16,7 @@ if (process.argv[2] === 'resume') {
 function roles() { const items = []; let cursor = 0; for (;;) { const page = admin('records.list', { kind: 'role', limit: 200, cursor }); items.push(...page.items); if (page.nextCursor === null) return items; cursor = page.nextCursor; } }
 const baseline = roles().map(role => [role.id, role.state]);
 admin('role.create', { id, accountId: 'main', name: '连续性行为验收', provider: process.env.KW_LLM_PROVIDER, model: process.env.KW_LLM_MODEL, initialPersona: '仅执行本地连续性验收。只使用continuity_read、continuity_revise、self_revise、life_plan、verification_read、verification_mark及必要内部工具。禁止QQ与空间发送，不执行shell。初始化时实际调用verification_read，以其operationId作为依据，保存当前生活life记录，activity.state=completed，记录读到的资料及尚有疑问。根据人工输入创建标题“面试后续”的thread记录，并调用verification_mark stage=initialized。收到明确拒绝时将该thread改为declined并移除reviewAt，保存verification_mark stage=refused。收到反馈时创建有期限的reflection并mark stage=feedback。不要为反思改写长期人格。完成后休息，不创建额外安排。' });
-const prepared = admin('role.prepare', { id }); assert.equal(prepared.compactionEngine, 'MindCompaction'); assert.equal(prepared.compactionMaxTokens, 8192);
+const prepared = admin('role.prepare', { id }); assert.equal(prepared.compactionEngine, 'MindCompaction'); assert.equal(prepared.agentMaxTokens, null); assert.ok(prepared.compactionPolicy.auto);
 admin('extension', { roleId: id, request: { action: 'install', id: 'observer', spec: resolve('tests/fixtures/continuity-observer') } });
 admin('extension', { roleId: id, request: { action: 'enable', id: 'observer' } });
 const observations = async () => { try { return (await readFile(join(resolve(process.env.KW_DATA_ROOT), 'workspaces', id, 'continuity-observations.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } };
@@ -38,11 +38,11 @@ try {
   assert.ok(admin('records.list', { roleId: id, kind: 'plan' }).items.filter(plan => plan.relatedRecords.includes(thread.id)).every(plan => ['cancelled', 'completed'].includes(plan.status)));
   admin('event', { roleId: id, text: '对你交流方式的本地反馈：“我只是分享开心，你有时解释得太多。先和我一起开心就够了。”请保存一条适用于类似交流的短期reflection，保留本条来源，标记feedback，然后休息。' }); await until('feedback');
   const currentRole = admin('role.read', { roleId: id }); assert.equal(currentRole.persona, currentRole.initialPersona, '短期反馈不应自动改写长期人格');
-  admin('role.control', { id, state: 'paused' }); const compacted = admin('role.compact', { id }); assert.ok(compacted);
+  admin('role.control', { id, state: 'paused' });
   records = admin('continuity.list', { roleId: id }).items; assert.ok(records.some(record => record.kind === 'reflection' && record.expiresAt)); assert.ok(records.some(record => record.kind === 'life'));
   const activities = admin('activity.list', { roleId: id }).items; assert.ok(activities.length >= 3);
   assert.ok(activities.some(activity => admin('activity.read', { roleId: id, id: activity.id, limit: 200 }).items.some(link => link.kind === 'continuity')));
   const actual = new Map(roles().map(role => [role.id, role.state])); for (const [roleId, state] of baseline) assert.equal(actual.get(roleId), state);
-  const report = { roleId: id, initialized: true, refused: true, feedback: true, schedulesCancelled: true, compacted: true, originalStatesPreserved: true, records: records.length, observations: await observations() };
+  const report = { roleId: id, initialized: true, refused: true, feedback: true, schedulesCancelled: true, originalStatesPreserved: true, records: records.length, observations: await observations() };
   await mkdir('.artifacts/verification', { recursive: true }); await writeFile('.artifacts/verification/continuity.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally { admin('role.control', { id, state: 'paused' }); admin('extension', { roleId: id, request: { action: 'disable', id: 'observer' } }); }

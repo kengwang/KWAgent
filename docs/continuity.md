@@ -40,7 +40,7 @@ life_plan 增加 purpose（internal / review / contact）和 relatedRecords；�
 
 ## 步骤背景与整理
 
-角色使用专用 kwagent preset，通过公开的 preset 声明接口继承宿主 standard 的工具及表达式，并在其隔离压缩组挂载 MindCompaction，默认摘要输出上限为8192 Token。人格前缀来自角色自身。原有Session继续使用原标识与记录；role.prepare返回实际压缩实现和预算，能够检查运行中的组成。
+角色使用专用 kwagent preset，通过公开的 preset 声明接口继承宿主 standard 的工具及表达式，并在其隔离压缩组挂载 MindCompaction。压缩参数完整继承宿主配置，模型容量和输出长度由 Harness 适配器解析。人格前缀来自角色自身。原有Session继续使用原标识与记录；role.prepare返回实际压缩策略和模型信息，能够检查运行中的组成。
 
 只有已经接纳的输入用于确定本步场合。每步冻结人格、自我状态、生活、关系、话头、会话判断、目标、记忆、表达、反思和实际近期交流；正文、版本、选择时间及预算写入同一 Session 快照。人工修改和新输入从后续步骤生效。
 

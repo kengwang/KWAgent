@@ -11,13 +11,13 @@ await mkdir(root, { recursive: true });
 const env = { ...process.env, KW_DATA_ROOT: root, DSH_HOME: join(root, 'dsh'), KW_HOST_PORT: '3093', KW_PUBLIC_URL: 'http://127.0.0.1:3093/', KW_BACKUP_ENABLED: 'false', KW_CHAT_THINKING_FORMAT: 'deepseek', HTTP_PROXY: 'http://127.0.0.1:7897', HTTPS_PROXY: 'http://127.0.0.1:7897', NO_PROXY: 'localhost,127.0.0.1' };
 const log = openSync(join(root, 'harness.log'), 'w', 0o600);
 const host = spawn(process.execPath, ['scripts/start.mjs'], { env, stdio: ['ignore', log, log] });
+let ready = false;
 const admin = (action, payload = null) => {
   const result = spawnSync(process.execPath, ['scripts/admin.mjs', action, JSON.stringify(payload)], { env, encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout);
   return JSON.parse(result.stdout);
 };
 try {
-  let ready = false;
   for (const end = Date.now() + 60000; Date.now() < end;) {
     if (host.exitCode !== null) throw new Error(`验收Host退出：${host.exitCode}`);
     try { ready = (await fetch('http://127.0.0.1:3093/kw-health')).ok; } catch (error) { if (error.cause?.code !== 'ECONNREFUSED') throw error; }
@@ -41,13 +41,16 @@ try {
   const memories = admin('memory.list', { roleId: id }).items;
   assert.ok(memories.some(memory => memory.sources.includes(event.id)));
   const records = admin('continuity.list', { roleId: id }).items.map(record => admin('continuity.read', { roleId: id, id: record.id, raw: true }));
-  assert.ok(records.some(record => record.data.context?.scene === 'group' && record.data.context.peerId === 20001));
+  for (const record of records) {
+    assert.ok(record.data.sources.includes(event.id));
+    if (record.data.context) assert.deepEqual(record.data.context, { scene: 'group', peerId: 20001 });
+  }
   assert.equal(admin('role.read', { roleId: id }).state, 'disabled');
-  const report = { actualHarness: true, actualModel: true, auxiliaryEffort: 'off', completed: true, schemaCommitted: true, roleRemainsDisabled: true, modelRequests: operations.length, elapsedMs: Date.now() - started, noSocialSends: true };
+  const report = { actualHarness: true, actualModel: true, auxiliaryEffort: 'off', completed: true, schemaCommitted: true, continuityRecords: records.length, roleRemainsDisabled: true, modelRequests: operations.length, elapsedMs: Date.now() - started, noSocialSends: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/auxiliary.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {
-  if (host.exitCode === null) { const exit = new Promise(resolve => host.once('exit', resolve)); host.kill('SIGTERM'); await Promise.race([exit, delay(20000)]); if (host.exitCode === null) host.kill('SIGKILL'); }
+  if (host.exitCode === null) { const exit = new Promise(resolve => host.once('exit', resolve)); if (ready) admin('shutdown'); else host.kill('SIGTERM'); await Promise.race([exit, delay(20000)]); if (host.exitCode === null) host.kill('SIGKILL'); }
   closeSync(log);
 }

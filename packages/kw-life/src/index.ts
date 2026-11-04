@@ -281,7 +281,7 @@ export class Life extends Service {
       if (this.store.role(roleId).state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
     };
     const exists = await this.ctx.sessionPersistence.stat(SessionId(role.sessionId));
-    const agentOptions = { provider: role.provider, model: role.model, maxTokens: 8192 };
+    const agentOptions = { provider: role.provider, model: role.model };
     const handle = exists
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'kwagent' }, agentOptions, setup });
@@ -449,7 +449,6 @@ export async function apply(ctx: Context): Promise<void> {
     if (role) {
       const resolved = await ctx.llm.resolveModelInfo(options.provider, options.model, options.signal);
       const estimated = (options.system ? tokens(options.system) : 0) + options.messages.reduce((sum, message) => sum + ('id' in message && message.id ? estimateMessage(message) : ROLE_OVERHEAD + estimateContent(message.content)), 0) + estimateToolsTokens({ config: { provider: options.provider, model: options.model }, tools: options.tools });
-      if (resolved.context && estimated + (options.maxTokens ?? resolved.defaultMaxTokens ?? 0) > resolved.context.contextWindow) throw new Error(`实际装配内容超过模型容量：输入估算 ${estimated} Token，模型容量 ${resolved.context.contextWindow} Token`);
       const agent = life.handles.get(role.id)?.agent;
       if (agent && isAgentLoopRequest(options)) appendPluginRecord(agent.session, 'plugin:kwagent/context', { kind: 'request-budget', estimatedTokens: estimated, contextWindow: resolved.context?.contextWindow ?? null });
     }

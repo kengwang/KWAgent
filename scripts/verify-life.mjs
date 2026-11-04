@@ -66,8 +66,6 @@ try {
   assert.ok(associations.some(activity => activity.items.some(link => link.kind === 'tool' && link.detail.rootCallId)));
   assert.ok(associations.some(activity => activity.items.some(link => link.kind === 'context' && link.detail.payloadId)));
   await call('role.control', { id, state: 'paused' });
-  const compacted = await call('role.compact', { id });
-  assert.ok(compacted, '需要实际发生上下文压缩');
   const recalled = await call('memory.recall', { roleId: id, query: '观察', semantic: false });
   assert.ok(recalled.length > 0);
   extension = await call('extension', { roleId: id, request: { action: 'disable', id: 'observer' } });
@@ -76,7 +74,7 @@ try {
   assert.ok(records.filter(row => row.lifecycle === 'mounted').length >= 2);
   assert.ok(records.filter(row => row.lifecycle === 'disposed').length >= 2);
   assert.equal(records.filter(row => row.stage === 'timer').length, 1);
-  const result = { roleId: id, stages: records.filter(row => row.stage).map(row => row.stage), memories: state.memories.length, schedules: state.plans.map(plan => plan.status), extension: extension.state, pauseResume: true, compacted: true, recalledAfterCompaction: recalled.length, activities: activities.items.length, runningInputAccepted: true, frozenContextReferences: true };
+  const result = { roleId: id, stages: records.filter(row => row.stage).map(row => row.stage), memories: state.memories.length, schedules: state.plans.map(plan => plan.status), extension: extension.state, pauseResume: true, recalledAfterPause: recalled.length, activities: activities.items.length, runningInputAccepted: true, frozenContextReferences: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/life.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));

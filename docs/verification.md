@@ -1,5 +1,15 @@
 # 验收记录
 
+## v0.3.4
+
+验收日期：2026 年 11 月 4 日。完整构建、严格类型检查、32 项测试和私密文件检查通过。
+
+`verify-compaction-policy.mjs` 使用独立数据目录、真实 Harness 与模型执行四个模型步骤。请求估算分别为 45272、47406、49025、50641 Token；请求头没有 KWAgent 指定的输出上限。运行策略与实际 BasicCompactionEngine 默认配置一致，自动及手动压缩均为零。工具检查后主动暂停，正常关闭并恢复同一 Session，暂停状态和策略保持一致；社交工具由守卫禁止。
+
+`verify-auxiliary.mjs` 在禁用的独立角色上完成一次真实辅助整理，使用模型声明的 off 档位；记忆与一项连续性记录通过 Schema 和来源检查，角色保持禁用。连续性记录可以为空，验收检查实际生成条目的来源和会话，不要求每次整理生成固定数量。
+
+报告保存在忽略目录 `.artifacts/verification/compaction-policy.json`、`auxiliary.json` 和 `review-harness-capacity.md`。上述过程没有触发手动压缩。
+
 ## v0.3.0
 
 验收日期：2026 年 11 月 4 日。Node.js 24.18.0、Bun 1.4.2、Harness 0.2.2-alpha.2；新增功能均来自外部插件。

@@ -11,7 +11,7 @@ loadEnvFile('.env');
 const original = JSON.parse(await readFile(inputFile, 'utf8'));
 assert.ok(Array.isArray(original.input?.sources), '需要实际整理请求的 input.sources');
 const client = new OpenAI({ baseURL: process.env.KW_CHAT_BASE_URL, apiKey: process.env.KW_CHAT_API_KEY, maxRetries: 0 });
-const response = await client.chat.completions.create({ model: process.env.KW_LLM_MODEL, messages: [{ role: 'system', content: consolidationInstructions }, { role: 'user', content: JSON.stringify(original.input) }], max_tokens: 8192, ...(process.env.KW_CHAT_THINKING_FORMAT === 'deepseek' ? { thinking: { type: 'disabled' } } : {}) });
+const response = await client.chat.completions.create({ model: process.env.KW_LLM_MODEL, messages: [{ role: 'system', content: consolidationInstructions }, { role: 'user', content: JSON.stringify(original.input) }], ...(process.env.KW_CHAT_THINKING_FORMAT === 'deepseek' ? { thinking: { type: 'disabled' } } : {}) });
 await mkdir('.artifacts/verification', { recursive: true });
 await writeFile('.artifacts/verification/consolidation-response.json', JSON.stringify(response), { mode: 0o600 });
 assert.equal(response.choices[0].finish_reason, 'stop');

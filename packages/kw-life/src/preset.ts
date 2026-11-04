@@ -11,7 +11,7 @@ export async function registerRolePreset(ctx: Context): Promise<void> {
   const problem = entryListProblem(value); if (problem) throw new Error(`宿主角色配置无效：${problem}`);
   let replaced = 0;
   const visit = (rows: PresetDefinition['plugins']): PresetDefinition['plugins'] => rows.map(row => {
-    if (row.id === 'compaction-basic') { replaced++; return { ...row, name: '@kwagent/kw-mind/compaction', config: { ...row.config, maxTokens: 8192 } }; }
+    if (row.id === 'compaction-basic') { replaced++; return { ...row, name: '@kwagent/kw-mind/compaction' }; }
     if (row.id === 'persona') return { ...row, config: { ...row.config, prefix: '' } };
     return row.group && Array.isArray(row.config) ? { ...row, config: visit(row.config) } : row;
   });

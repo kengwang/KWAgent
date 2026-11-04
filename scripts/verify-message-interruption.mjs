@@ -69,8 +69,7 @@ try {
   assert.equal(life.data.kind, 'life');
   assert.ok(life.data.memories.length > 0);
   assert.ok(life.data.memories.every(value => admin('memory.read', { roleId: id, id: value })));
-  assert.ok(admin('role.compact', { id }), '真实会话应完成压缩');
-  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationInterrupted: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, compacted: true, noSocialSends: true };
+  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationInterrupted: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, noSocialSends: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/message-interruption.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

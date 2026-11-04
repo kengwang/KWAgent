@@ -8,6 +8,8 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 
 接口支持 DeepSeek 思考协议时，设置 `KW_CHAT_THINKING_FORMAT=deepseek`，向 Harness 声明实际可用档位。聊天默认使用 medium，辅助整理与检索使用已声明的 off，避免思考内容挤占 JSON 输出预算；没有声明该配置时保留接口原有行为。
 
+模型上下文容量、输出长度和自动压缩策略由 Harness 的模型目录、适配器与宿主配置解析。KWAgent 不覆盖这些 Token 参数。自定义模型没有目录条目时使用 Harness 适配器的默认能力声明；可以通过 Harness 模型设置维护接口实际提供的能力。`role.prepare` 返回生效的模型信息和继承的压缩策略。感知、记忆与工具预览预算只控制资料装配和分页，不作为模型窗口或压缩阈值。
+
 `KW_DATA_ROOT` 是服务器上的持久目录。Compose 将它挂载到容器 `/data`。应用使用 UID/GID 10001；数据准备命令在停止应用时创建目录并设置权限。
 
 ## GHCR 镜像与 1Panel 网络
