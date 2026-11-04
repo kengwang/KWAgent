@@ -34,6 +34,8 @@ docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 
 反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
 
+需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.1ms.run/kengwang/kwagent:0.3.0`，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
+
 `.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
 
 ## 构建与启动

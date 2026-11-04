@@ -55,6 +55,8 @@ v0.3.0 在独立测试卷中使用保留的旧镜像创建数据，再启动候�
 
 ## 部署条件
 
-生产服务器的 HTTPS 域名与连接方式尚未提供，生产环境 TLS、Cookie、代理长连接和 Lagrange 访问签名媒体仍需在该环境执行。已有 Compose、代理模板及部署命令。
+生产实例已通过固定 digest 的 v0.3.0 镜像部署在 `/root/KWAgent`，拉取使用 `ghcr.1ms.run`。服务器只保存 Compose、环境配置和持久数据，应用以 UID/GID 10001 运行，仅接入 `1panel-network`，没有宿主端口映射。已验证 Schema 3、Milky MCP、事件连接、容器健康、网络 DNS、公开 Host 接受及初始完整备份；原有 Lagrange 容器和配置保持完整。
+
+生产实例使用独立数据目录，角色通过 Panel 创建和启用。登录入口保存在服务器权限为 `0600` 的 `.deployment/login-url.txt`。反向代理由服务器管理方配置，外部 TLS、Cookie、代理长连接和 Lagrange 访问签名媒体需要在公开入口继续验收。
 
 GitHub 仓库配置为 `kengwang/KWAgent`（公开），GHCR 路径为 `ghcr.io/kengwang/kwagent`。自动化规则、标签含义和私密文件边界见 `docs/github.md`，远端运行结果以 GitHub Actions 记录为准。v0.3.0 使用版本标签、版本镜像及完整提交镜像标识，保留 v0.1.0、v0.2.0 发布物。
