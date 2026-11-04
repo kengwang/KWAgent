@@ -1,6 +1,6 @@
 {
   "name": "@kwagent/core",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "type": "module",
   "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib"],

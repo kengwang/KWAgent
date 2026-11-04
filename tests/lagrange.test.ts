@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Store, loadConfig } from '@kwagent/core';
-import { MilkyClient, MilkyEvents, responseData, MilkyBusinessError, MediaModule, milkyId, toolConversation } from '@kwagent/kw-lagrange';
+import { MilkyClient, MilkyEvents, responseData, MilkyBusinessError, MilkyEndpointError, mcpArguments, MediaModule, milkyId, toolConversation } from '@kwagent/kw-lagrange';
 import { mcpToolName } from '../packages/kw-lagrange/src/index.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
@@ -28,6 +28,26 @@ test('远端十进制字符串与整数标识使用相同的会话和联系人�
   assert.equal(toolConversation({ group_id: '20001' }, 'send_temp_message'), null);
   assert.equal(toolConversation({}), null);
   for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '', ' 123', '1e3', '1.2', '9007199254740992', null, true]) assert.throws(() => milkyId(value));
+});
+
+test('MCP 参数在序列化边界递归保留 type 优先，内容与原始输入保持完整', () => {
+  const text = '{"data":{"text":"正文JSON字符串"},"type":"text"}';
+  const input = { group_id: '20001', message: [{ data: { messages: [{ user_id: '10001', sender_name: '来源名称', segments: [{ data: { text }, type: 'text' }, { data: { messages: [{ user_id: '10001', sender_name: '来源名称', segments: [{ data: { uri: 'base64://YWJj' }, type: 'image' }] }] }, type: 'forward' }] }] }, type: 'forward' }] };
+  const output = mcpArguments(input);
+  assert.deepEqual(output, input);
+  assert.deepEqual(Object.keys(input.message[0]!), ['data', 'type']);
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if ('type' in value) assert.equal(Object.keys(value)[0], 'type');
+    for (const child of Object.values(value)) visit(child);
+  };
+  visit(output);
+  assert.equal(JSON.stringify(output).includes(JSON.stringify(text)), true);
+  assert.deepEqual(mcpArguments(output), output);
+});
+
+test('MCP 端点通用异常保留未知执行语义，不能当作确定业务失败', () => {
+  assert.throws(() => responseData({ isError: true, content: [{ type: 'text', text: '{"error":"Endpoint invocation failed."}' }] }), error => error instanceof MilkyEndpointError && !(error instanceof MilkyBusinessError) && /执行结果未知/.test(error.message));
 });
 
 test('真实事件接收 Module 去重、保留作者并避免自身消息触发', () => {

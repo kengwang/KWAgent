@@ -16,6 +16,18 @@ const toolList = z.object({ tools: z.array(milkyToolSchema), nextCursor: z.strin
 const milkyResponse = z.object({ status: z.string(), retcode: z.number(), message: z.string().nullable().optional(), data: jsonSchema.optional() });
 export const messageSendTools = new Set(['send_group_message', 'send_private_message', 'send_temp_message']);
 export const markdownUnsupported = '当前 Lagrange 接入不支持 Markdown 消息发送，包括合并转发中的 Markdown 片段。请使用 text 片段发送普通文字。';
+export const messageFormatGuidance = '发送前读取当前 lagrange Skill。message 是片段对象数组，每个片段先写 type 再写 data，data 为对应字段对象，嵌套转发的 segments 同样处理。';
+
+/** System.Text.Json 的多态绑定要求 type 判别字段先于普通字段。 */
+export function mcpArguments(args: Record<string, unknown>): Record<string, unknown> {
+  const visit = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== 'object') return value;
+    const entries = Object.entries(value);
+    return Object.fromEntries([...entries.filter(([key]) => key === 'type'), ...entries.filter(([key]) => key !== 'type')].map(([key, child]) => [key, visit(child)]));
+  };
+  return visit(args) as Record<string, unknown>;
+}
 
 export function assertSupportedMessage(name: string, args: Record<string, unknown>): void {
   if (!messageSendTools.has(name)) return;
@@ -33,7 +45,11 @@ export function assertSupportedMessage(name: string, args: Record<string, unknow
 export class MilkyBusinessError extends Error {
   constructor(readonly response: Json) { super(`Milky 操作失败：${JSON.stringify(response)}`); }
 }
+export class MilkyEndpointError extends Error {
+  constructor(readonly response: Json) { super(`Milky 端点异常，执行结果未知；请读取操作记录和会话历史核实，勿自动重放：${JSON.stringify(response)}`); }
+}
 export function responseData(result: { isError?: boolean; structuredContent?: Record<string, unknown>; content: unknown[] }): Json {
+  if (result.isError && JSON.stringify(result).includes('Endpoint invocation failed.')) throw new MilkyEndpointError(asJson(result));
   if (result.isError) throw new MilkyBusinessError(asJson(result));
   let value: unknown = result.structuredContent;
   if (!value) {
@@ -100,7 +116,7 @@ export class MilkyClient {
 
   async rawCall(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
     try {
-      const result = await this.sdk.callTool({ name, arguments: args }, undefined, { signal, timeout: this.config.timeoutMs });
+      const result = await this.sdk.callTool({ name, arguments: mcpArguments(args) }, undefined, { signal, timeout: this.config.timeoutMs });
       return z.object({ content: z.array(z.unknown()), isError: z.boolean().optional(), structuredContent: z.record(z.string(), z.unknown()).optional() }).passthrough().parse(result);
     } catch (error) {
       if (!signal?.aborted) this.status = { state: 'error', since: now(), error: errorText(error) };
@@ -115,15 +131,16 @@ export class MilkyClient {
     const tool = this.tools.find(tool => tool.name === name);
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;
-    const intent = roleId && this.payloads ? await this.payloads.view(roleId, `intent:${correlation?.callId ?? name}`, asJson(args), this.previewTokens, signal) : asJson(args);
-    const context = toolConversation(args, name);
+    const wireArgs = mcpArguments(args);
+    const intent = roleId && this.payloads ? await this.payloads.view(roleId, `intent:${correlation?.callId ?? name}`, asJson(wireArgs), this.previewTokens, signal) : asJson(wireArgs);
+    const context = toolConversation(wireArgs, name);
     const operation = write ? this.store.startOperation(this.accountId, roleId, name, intent, { ...correlation, context }) : undefined;
     const run = async () => {
       let dispatched = false;
       try {
         signal?.throwIfAborted();
         dispatched = true;
-        const result = await this.rawCall(name, args, signal);
+        const result = await this.rawCall(name, wireArgs, signal);
         responseData(result);
         if (operation) this.store.finishOperation(operation.id, 'succeeded', roleId && this.payloads ? await this.payloads.view(roleId, operation.id, asJson(result), this.previewTokens) : asJson(result));
         this.capabilities.record(name, 'succeeded', { operationId: operation?.id ?? null, roleId });

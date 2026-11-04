@@ -1,6 +1,6 @@
 ---
 name: lagrange
-description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情、语音、视频、文件和转发，查询历史与人物资料，执行社交操作并核实工具结果。
+description: 通过 Lagrange MCP 使用 QQ：先读取消息片段的 type/data 格式与字段顺序，再发送文字、媒体和转发，查询历史与人物资料并核实回执。
 ---
 
 # Lagrange
@@ -29,9 +29,45 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 
 ## 消息结构
 
-`send_group_message` 的参数为 `{group_id, message:[{type,data}, ...], message_style?}`。私聊使用 `{user_id,message,message_style?}`。
+发送工具的参数直接填写会话字段和 `message`，无需额外包裹 `arguments` 或 `parameters`。
 
-`message` 是片段数组。普通文字与图片可以按顺序组合。语音单独发送。发送消息使用实际工具调用，内部文字输出保存在自己的活动记录。
+| 工具 | 会话字段 | 消息字段 |
+|---|---|---|
+| `mcp__lagrange__send_group_message` | `group_id`：当前真实群号 | `message`：片段数组 |
+| `mcp__lagrange__send_private_message` | `user_id`：当前真实联系人 QQ | `message`：片段数组 |
+| `mcp__lagrange__send_temp_message` | `user_id`：实际联系人 QQ；`group_id`：实际来源群号 | `message`：片段数组 |
+
+**每个片段按 `type`、`data` 的顺序构造，序列化后 `type` 必须位于该片段的第一项。** 当前 Lagrange 的多态 JSON 绑定依赖这个顺序；该要求同样适用于嵌套转发节点的 `segments`。脚本和 `run_code` 中也保持该顺序，不按字母排序片段的属性。
+
+- `type` 是片段类型字符串，如 `text`、`mention`、`reply`、`image`。
+- `data` 是对应类型的字段对象；普通文字放在 `data.text`，图片地址放在 `data.uri`。
+- `message` 必须是对象数组，直接作为工具参数提交。正文是字符串，整个片段或数组保持 JSON 结构。
+
+下面是组装方法，`event` 来自当前真实群消息，`replyText` 是准备发送的普通文字。将 `args` 对象作为群消息工具参数：
+
+```typescript
+const args = {
+  group_id: String(event.peerId),
+  message: [
+    { type: "text", data: { text: replyText } },
+  ],
+};
+```
+
+需要引用并提及时，使用当前会话的真实序号和发言者：
+
+```typescript
+const args = {
+  group_id: String(event.peerId),
+  message: [
+    { type: "reply", data: { message_seq: event.messageSeq } },
+    { type: "mention", data: { user_id: event.senderId } },
+    { type: "text", data: { text: replyText } },
+  ],
+};
+```
+
+私聊用真实私聊事件的 `peerId` 填写 `user_id`，继续使用同样的片段结构。`message_style` 是可选的顶层字段。普通文字与图片可以按顺序组合，语音独立发送。内部 assistant 文字保存在活动记录中。
 
 不支持 Markdown 消息发送，包括群聊、私聊、临时会话及合并转发中的 `markdown` 片段。使用 `text` 片段发送普通文字。远程 Schema 中出现 `markdown` 也不能作为可用发送能力。
 
@@ -44,6 +80,8 @@ description: 通过 Lagrange MCP 使用 QQ：发送组合消息、图片表情�
 成功需要同时满足 MCP 未报告错误、Milky `status="ok"`、`retcode=0`。消息成功回执包含 `message_seq` 和 `time`；保存回执后才能确认已发送。
 
 调用超时可能已经产生远程效果。检查操作记录和会话历史，核实结果后决定后续行动。不要盲目重复发送或重复上传。
+
+`Endpoint invocation failed` 表示服务端隐藏了具体异常，按结果未知处理。先读取原操作和会话历史，保留失败时的参数与来源；同一内容不要自动再次发送。该错误可能来自 JSON 绑定，检查 `type` 优先的片段结构；正确格式仍失败时需要服务端日志中的具体原因。
 
 ## 自身经历
 

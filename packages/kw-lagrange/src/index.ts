@@ -15,7 +15,7 @@ import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTool
 import { MilkyEvents } from './events.ts';
 import { MediaModule } from './media.ts';
 
-export { MilkyClient, responseData, MilkyBusinessError } from './client.ts';
+export { MilkyClient, responseData, MilkyBusinessError, MilkyEndpointError, mcpArguments } from './client.ts';
 export { milkyId, toolConversation } from '@kwagent/core';
 export { MilkyEvents } from './events.ts';
 export { MediaModule } from './media.ts';
@@ -126,7 +126,7 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.effect(() => () => lagrange.close(), 'kw-lagrange.connections');
   const skillPath = fileURLToPath(new URL('../skills/lagrange/SKILL.md', import.meta.url));
   const skill = await readFile(skillPath, 'utf8');
-  ctx.skills.register({ name: 'lagrange', description: '通过 Lagrange MCP 在 QQ 中交流：消息组合、媒体、转发、表情、历史、资料和工具结果核实。', content: skill, source: 'runtime', path: skillPath, resourceBase: { kind: 'directory', path: fileURLToPath(new URL('../skills/lagrange/', import.meta.url)) } });
+  ctx.skills.register({ name: 'lagrange', description: '通过 Lagrange MCP 使用 QQ：先读取消息片段的 type/data 格式与字段顺序，再发送文字、媒体和转发，查询历史与人物资料并核实回执。', content: skill, source: 'runtime', path: skillPath, resourceBase: { kind: 'directory', path: fileURLToPath(new URL('../skills/lagrange/', import.meta.url)) } });
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/kw-media', resource: request => lagrange.media.serve(request) }), 'kw-lagrange.media-route');
 }
 

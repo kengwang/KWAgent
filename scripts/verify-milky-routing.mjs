@@ -17,12 +17,15 @@ try {
   const ajv = new Ajv({ strict: false, validateFormats: false });
   const verified = [];
   for (const [tool, args, context] of [
-    ['send_group_message', { group_id: String(groupId), message: [{ type: 'text', data: { text: '预取消校验，不发送。' } }] }, { scene: 'group', peerId: groupId }],
-    ['send_private_message', { user_id: String(contactId), message: [{ type: 'text', data: { text: '预取消校验，不发送。' } }] }, { scene: 'private', peerId: contactId }],
-    ['send_temp_message', { group_id: String(groupId), user_id: String(contactId), message: [{ type: 'text', data: { text: '预取消校验，不发送。' } }] }, { scene: 'private', peerId: contactId }],
+    ['send_group_message', { group_id: String(groupId), message: [{ data: { text: '预取消校验，不发送。' }, type: 'text' }] }, { scene: 'group', peerId: groupId }],
+    ['send_private_message', { user_id: String(contactId), message: [{ data: { text: '预取消校验，不发送。' }, type: 'text' }] }, { scene: 'private', peerId: contactId }],
+    ['send_temp_message', { group_id: String(groupId), user_id: String(contactId), message: [{ data: { text: '预取消校验，不发送。' }, type: 'text' }] }, { scene: 'private', peerId: contactId }],
   ]) {
     const definition = client.tools.find(item => item.name === tool);
     assert.ok(definition);
+    const catalogue = client.capabilities.read(tool, 50, 0, true);
+    assert.equal(catalogue.policyVersion, 2);
+    assert.match(catalogue.items[0].policy, /先写 type 再写 data/);
     const validate = ajv.compile(definition.inputSchema);
     assert.ok(validate(args), ajv.errorsText(validate.errors));
     assert.deepEqual(toolConversation(args, tool), context);
@@ -33,7 +36,9 @@ try {
     assert.equal(operation.state, 'failed');
     assert.deepEqual(operation.context, context);
     assert.deepEqual(operation.arguments, args);
-    verified.push({ tool, remoteSchemaAcceptedStringId: true, contextSaved: true, cancelledBeforeDispatch: true });
+    assert.equal(Object.keys(args.message[0])[0], 'data');
+    assert.equal(Object.keys(operation.arguments.message[0])[0], 'type');
+    verified.push({ tool, remoteSchemaAcceptedStringId: true, contextSaved: true, discriminatorFirst: true, originalArgumentsPreserved: true, formatGuidance: true, cancelledBeforeDispatch: true });
   }
   const report = { actualMcpDiscovery: true, actualSqlite: true, verified, noSocialSends: true };
   await mkdir('.artifacts/verification', { recursive: true });
