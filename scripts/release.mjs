@@ -21,7 +21,7 @@ if (image.status === 0) throw new Error('该版本镜像已经存在，请使用
 const archive = spawnSync('git', ['archive', '--format=tar', commit], { maxBuffer: 64 * 1024 * 1024 });
 if (archive.status !== 0) throw new Error('无法读取发布提交');
 const candidate = `kwagent:candidate-${commit}`;
-const build = spawnSync('docker', ['build', '--platform', 'linux/amd64', '--build-arg', `KW_COMMIT=${commit}`, '--build-arg', `NODE_IMAGE=${process.env.KW_NODE_IMAGE ?? 'node:24.18.0-bookworm-slim'}`, '--build-arg', `HTTP_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '--build-arg', `HTTPS_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '-t', candidate, '-'], { input: archive.stdout, stdio: ['pipe', 'inherit', 'inherit'] });
+const build = spawnSync('docker', ['build', '--platform', 'linux/amd64', '--build-arg', `KW_COMMIT=${commit}`, '--build-arg', `KW_VERSION=${version}`, '--build-arg', `NODE_IMAGE=${process.env.KW_NODE_IMAGE ?? 'node:24.18.0-bookworm-slim'}`, '--build-arg', `HTTP_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '--build-arg', `HTTPS_PROXY=${process.env.KW_BUILD_PROXY ?? ''}`, '-t', candidate, '-'], { input: archive.stdout, stdio: ['pipe', 'inherit', 'inherit'] });
 if (build.status !== 0) process.exit(build.status ?? 1);
 const verify = spawnSync(process.execPath, ['scripts/verify-docker.mjs', candidate], { stdio: 'inherit' });
 if (verify.status !== 0) process.exit(verify.status ?? 1);

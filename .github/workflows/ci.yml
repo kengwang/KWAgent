@@ -59,12 +59,16 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     timeout-minutes: 35
+    concurrency:
+      group: docker-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Check version tag and choose image
         id: release
@@ -90,11 +94,15 @@ jobs:
           load: true
           push: false
           tags: kwagent:ci
-          build-args: KW_COMMIT=${{ github.sha }}
+          build-args: |
+            KW_COMMIT=${{ github.sha }}
+            KW_VERSION=${{ steps.release.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run image without external network
         run: docker run --rm --network none --entrypoint node kwagent:ci scripts/verify-image.mjs
+      - name: Verify upgrades from retained releases
+        run: node scripts/verify-upgrade.mjs kwagent:ci
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -116,6 +124,21 @@ jobs:
             cat .artifacts/tmp/manifest-error.txt >&2
             exit 1
           fi
+      - name: Preserve existing commit image
+        if: github.event_name != 'pull_request'
+        id: sha
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:sha-$COMMIT" > .artifacts/tmp/commit-image.txt 2> .artifacts/tmp/commit-image-error.txt; then
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          elif grep -Eiq 'manifest unknown|not found' .artifacts/tmp/commit-image-error.txt; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            cat .artifacts/tmp/commit-image-error.txt >&2
+            exit 1
+          fi
       - name: Generate image tags and labels
         if: github.event_name != 'pull_request'
         id: metadata
@@ -123,7 +146,7 @@ jobs:
         with:
           images: ${{ steps.release.outputs.image }}
           tags: |
-            type=sha,format=long
+            type=sha,format=long,enable=${{ steps.sha.outputs.publish == 'true' }}
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
           labels: |
@@ -138,7 +161,9 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
-          build-args: KW_COMMIT=${{ github.sha }}
+          build-args: |
+            KW_COMMIT=${{ github.sha }}
+            KW_VERSION=${{ steps.release.outputs.version }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha

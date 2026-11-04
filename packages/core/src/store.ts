@@ -198,7 +198,7 @@ export class Store {
       .all(roleId ?? null, roleId ?? null, before ?? null, before ?? null, limit).map(row => this.eventFromRow(row));
   }
   peers(accountId: string, scene: string): number[] {
-    return this.db.prepare('SELECT DISTINCT peer_id FROM events WHERE account_id=? AND scene=? AND role_id IS NOT NULL AND peer_id IS NOT NULL').all(accountId, scene).map(row => Number(row.peer_id));
+    return this.db.prepare("SELECT DISTINCT peer_id FROM events WHERE account_id=? AND scene=? AND source='milky' AND role_id IS NOT NULL AND peer_id IS NOT NULL").all(accountId, scene).map(row => Number(row.peer_id));
   }
   event(id: string): Experience { const row = this.db.prepare('SELECT * FROM events WHERE id=?').get(id); if (!row) throw new Error(`经历不存在：${id}`); return this.eventFromRow(row); }
   pending(roleId: string, limit = 50): Experience[] {

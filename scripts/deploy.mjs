@@ -9,7 +9,7 @@ const run = (command, args, capture = false) => {
   return capture ? result.stdout.trim() : '';
 };
 if (run('git', ['status', '--porcelain', '--untracked-files=no'], true)) throw new Error('部署需要所有受版本管理的修改已经提交');
-const image = process.env.KW_IMAGE ?? 'kwagent:0.2.0';
+const image = process.env.KW_IMAGE ?? `kwagent:${JSON.parse(readFileSync('package.json', 'utf8')).version}`;
 const inspect = JSON.parse(run('docker', ['image', 'inspect', image], true))[0];
 const commit = run('git', ['rev-parse', 'HEAD'], true);
 if (inspect.Config.Labels['org.opencontainers.image.revision'] !== commit) throw new Error('镜像与当前提交不一致');

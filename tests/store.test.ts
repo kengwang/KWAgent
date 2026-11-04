@@ -58,6 +58,9 @@ test('消息去重、历史核对位置与事务撤销', () => {
     assert.equal(store.pendingBatch('alice').messageId, 'prepared-message');
     store.completeDelivered('alice', ['message']);
     assert.ok(store.pending('alice').some(event => event.id === later.id));
+    store.appendEvent({ ...input, source: 'manual', scene: 'private', peerId: 10001, messageSeq: null });
+    assert.deepEqual(store.peers('main', 'private'), []);
+    assert.deepEqual(store.peers('main', 'group'), [123]);
   } finally { store.close(); }
 });
 

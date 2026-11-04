@@ -1,0 +1,31 @@
+import { chromium, expect } from '@playwright/test';
+import { readFile, mkdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+const admin = (action, payload = null) => { const result = spawnSync(process.execPath, ['scripts/admin.mjs', action, JSON.stringify(payload)], { encoding: 'utf8' }); if (result.status !== 0) throw new Error(result.stderr); return JSON.parse(result.stdout); };
+const match = /dsh web: (http[^\s]+)/.exec(await readFile('.artifacts/harness.log', 'utf8')); if (!match) throw new Error('没有找到Harness入口');
+const browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : 'chromium', headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); const errors = []; page.on('pageerror', error => errors.push(error.message));
+await page.addLocatorHandler(page.getByRole('dialog', { name: '预览版说明' }), async dialog => { await dialog.getByRole('button', { name: '继续', exact: true }).click(); });
+try {
+  const id = `continuity-ui-${Date.now()}`; const state = admin('status');
+  const role = admin('role.create', { id, accountId: 'main', name: '连续性界面验收', initialPersona: '本地管理界面检查，保持未启用。', provider: state.config.chat.provider, model: state.config.chat.model });
+  await page.goto(match[1], { waitUntil: 'networkidle' }); await page.getByRole('button', { name: 'KWAgent', exact: true }).click();
+  await page.locator(`[data-role-id="${id}"]`).click(); await page.getByRole('button', { name: '角色', exact: true }).click();
+  await page.getByRole('button', { name: '添加连续性记录', exact: true }).click();
+  await page.getByLabel('记录类型', { exact: true }).selectOption('reflection'); await page.getByLabel('记录标题', { exact: true }).fill('交流反思验收'); await page.getByLabel('记录正文', { exact: true }).fill('先回应对方分享的开心。'); await page.getByLabel('修改理由', { exact: true }).fill('检查实际界面写入'); await page.getByRole('button', { name: '保存连续性', exact: true }).click();
+  const card = page.locator('article').filter({ has: page.getByRole('heading', { name: '交流反思验收', exact: true }) }); await card.waitFor();
+  await card.getByRole('button', { name: '编辑连续性', exact: true }).click(); await page.getByLabel('记录正文', { exact: true }).fill('保留尚未提交的编辑内容。'); await page.getByLabel('修改理由', { exact: true }).fill('检查修订冲突');
+  const current = admin('continuity.list', { roleId: id, kind: 'reflection' }).items[0]; const raw = admin('continuity.read', { roleId: id, id: current.id, raw: true });
+  admin('continuity.revise', { roleId: id, id: raw.id, expectedRevision: raw.revision, data: { ...raw.data, content: '管理接口更新的反思。' }, reason: '验证并发编辑' });
+  await card.getByText('管理接口更新的反思。', { exact: true }).waitFor(); await page.getByRole('button', { name: '保存连续性', exact: true }).click();
+  await page.getByText('提交未完成，输入已保留。读取当前版本后可以重新编辑。', { exact: true }).waitFor(); await expect(page.getByLabel('记录正文', { exact: true })).toHaveValue('保留尚未提交的编辑内容。');
+  await page.getByRole('button', { name: '读取连续性当前版本', exact: true }).click(); await expect(page.getByLabel('记录正文', { exact: true })).toHaveValue('管理接口更新的反思。'); await page.getByLabel('修改理由', { exact: true }).fill('使用当前修订提交'); await page.getByRole('button', { name: '保存连续性', exact: true }).click();
+  await card.getByRole('button', { name: '阅读依据与回执', exact: true }).click(); await page.locator('.kw-detail').getByRole('button', { name: /^读取来源 / }).first().click(); await page.locator('.kw-detail').getByText('continuity_revise', { exact: false }).waitFor(); await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '目标与安排', exact: true }).click(); await page.getByRole('button', { name: '添加连续性记录', exact: true }).click();
+  await page.getByLabel('记录标题', { exact: true }).fill('界面话头验收'); await page.getByLabel('记录正文', { exact: true }).fill('等待合适时机了解后续。'); await page.getByLabel('下次复核时间', { exact: true }).fill(new Date(Date.now() + 86400000).toISOString()); await page.getByLabel('修改理由', { exact: true }).fill('验证复核与话头联动'); await page.getByRole('button', { name: '保存连续性', exact: true }).click();
+  const thread = page.locator('article').filter({ has: page.getByRole('heading', { name: '界面话头验收', exact: true }) }); await thread.waitFor(); await thread.getByRole('button', { name: '编辑连续性', exact: true }).click(); await page.getByLabel('记录状态', { exact: true }).selectOption('declined'); await page.getByLabel('修改理由', { exact: true }).fill('根据明确拒绝结束'); await page.getByRole('button', { name: '保存连续性', exact: true }).click();
+  await thread.getByText(/对方拒绝/).waitFor(); const record = admin('continuity.list', { roleId: id, kind: 'thread' }).items[0]; assert.ok(admin('records.list', { roleId: id, kind: 'plan' }).items.filter(plan => plan.relatedRecords.includes(record.id)).every(plan => plan.status === 'cancelled'));
+  await mkdir('.artifacts/browser', { recursive: true }); await page.screenshot({ path: '.artifacts/browser/continuity-desktop.png', fullPage: true }); await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: '.artifacts/browser/continuity-mobile.png', fullPage: true }); assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ roleId: role.id, panel: true, conflictPreserved: true, sourceNavigation: true, scheduleCancelled: true, browserErrors: 0 }));
+} catch (error) { await mkdir('.artifacts/browser', { recursive: true }); await page.screenshot({ path: '.artifacts/browser/continuity-failure.png', fullPage: true }); throw new Error(error.message.replace(/token=[^\s&]+/g, 'token=[REDACTED]')); } finally { await browser.close(); }

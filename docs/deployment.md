@@ -54,7 +54,7 @@ docker compose exec -T kwagent node scripts/admin.mjs resume
 
 每天按配置时间创建备份，保留期限由 `KW_BACKUP_KEEP_DAYS` 指定。完整备份包含数据库、Session、工作目录、扩展、媒体和 `artifacts/` 负载对象，以及版本清单与校验和。
 
-v0.2.0 启动时将数据库升级到 Schema 2，并在迁移前保存 Schema 1 的 SQLite 快照。正常升级仍应执行完整备份。新建对象目录使用 UID/GID 10001 和私有权限；全部中间文件继续写入 `/data/tmp`。
+v0.3.0 启动时将数据库升级到 Schema 3，并在迁移前保存原 Schema 1/2 的 SQLite 快照。正常升级先执行完整备份。连续性资料、来源、修订和计划关联保存在同一数据库；负载对象保持完整备份。新建对象目录使用 UID/GID 10001 和私有权限；全部中间文件继续写入 `/data/tmp`。
 
 停止应用后，恢复到独立目录：
 

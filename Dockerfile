@@ -36,8 +36,9 @@ COPY --from=build /opt/kwagent/packages ./packages
 COPY --from=build /opt/kwagent/scripts ./scripts
 COPY --from=build /opt/kwagent/package.json /opt/kwagent/bun.lock /opt/kwagent/bunfig.toml ./
 ARG KW_COMMIT=unknown
+ARG KW_VERSION=development
 LABEL org.opencontainers.image.title="KWAgent" \
-      org.opencontainers.image.version="0.2.0" \
+      org.opencontainers.image.version="${KW_VERSION}" \
       org.opencontainers.image.revision="${KW_COMMIT}"
 ENV KW_COMMIT=${KW_COMMIT}
 USER 10001:10001

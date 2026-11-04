@@ -152,7 +152,7 @@ export class Operations {
         if (await exists(source)) await cp(source, join(directory, name), { recursive: true, dereference: false, filter: path => !path.endsWith('.lock') && !path.includes(`${sep}node_modules${sep}.cache`) });
       }
       const files = await checksums(directory);
-      const manifest = { version: 1, createdAt: now(), appVersion: APP_VERSION, harnessVersion: '0.2.2-alpha.2', schema: SCHEMA_VERSION, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_IMAGE ?? null, files };
+      const manifest = { version: 1, createdAt: now(), appVersion: APP_VERSION, harnessVersion: '0.2.2-alpha.2', schema: SCHEMA_VERSION, commit: process.env.KW_COMMIT ?? null, image: process.env.KW_CONTAINER === 'true' ? process.env.KW_IMAGE ?? null : null, files };
       await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest, null, 2), { mode: 0o600 });
       this.life.store.setMeta('last-backup', JSON.stringify({ directory, ...manifest, files: files.length }));
       const cutoff = Date.now() - this.life.config.backup.keepDays * 86400000;

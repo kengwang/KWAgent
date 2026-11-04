@@ -93,3 +93,15 @@ test('PTC仅沿真实执行身份传播外部子调用，同callId重启后不�
     assert.equal(module.sourceMeaning('alice', original.id), 'observed');
   } finally { store.close(); }
 });
+test('真实SQLite拒绝写入时，连续性、修订与声明操作不产生部分成功', () => {
+  const { store, module, base, request } = environment();
+  try {
+    const count = Number(store.db.prepare('SELECT count(*) count FROM documents').get()!.count);
+    store.db.exec('PRAGMA query_only=ON');
+    assert.throws(() => module.revise('alice', request({ ...base, kind: 'thread' })), /readonly/i);
+    store.db.exec('PRAGMA query_only=OFF');
+    assert.equal(Number(store.db.prepare('SELECT count(*) count FROM documents').get()!.count), count);
+    assert.equal(module.list('alice').items.length, 0);
+    assert.equal(store.integrity(), 'ok');
+  } finally { store.close(); }
+});

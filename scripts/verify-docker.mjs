@@ -4,12 +4,14 @@ import { strict as assert } from 'node:assert';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { request } from 'node:http';
+import { APP_VERSION, SCHEMA_VERSION } from '@kwagent/core';
 
 loadEnvFile('.env');
 const image = process.argv[2] ?? 'kwagent:verification';
 const name = `kwagent-test-${Date.now()}`;
 const volume = `${name}-data`;
-const baseImage = 'kwagent:0.1.0';
+const baseImage = process.argv[3] ?? 'kwagent:0.2.0';
+const oldSchema = baseImage.endsWith(':0.1.0') ? 1 : 2;
 function docker(...args) {
   const result = spawnSync('docker', args, { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout);
@@ -26,18 +28,18 @@ async function ready() {
   throw new Error('容器业务就绪超时');
 }
 docker('volume', 'create', volume);
-const start = selected => docker('run', '-d', '--name', name, '--init', '--env-file', '.env', '-e', 'KW_DATA_ROOT=/data', '-e', 'DSH_HOME=/data/dsh', '-e', 'KW_CONTAINER=true', '-e', `KW_IMAGE=${selected}`, '-e', 'KW_PUBLIC_URL=https://kwagent.local.test', '-e', 'HTTP_PROXY=', '-e', 'HTTPS_PROXY=', '-p', '127.0.0.1:3082:3080', '-v', `${volume}:/data`, selected);
+const start = selected => docker('run', '-d', '--name', name, '--init', '--env-file', '.env', '-e', 'KW_DATA_ROOT=/data', '-e', 'DSH_HOME=/data/dsh', '-e', 'KW_CONTAINER=true', '-e', `KW_IMAGE=${selected}`, '-e', 'KW_PUBLIC_URL=https://kwagent.local.test', '-e', `HTTP_PROXY=${process.env.KW_RUNTIME_PROXY ?? ''}`, '-e', `HTTPS_PROXY=${process.env.KW_RUNTIME_PROXY ?? ''}`, '-e', 'NO_PROXY=localhost,127.0.0.1,kwagent.local.test', '-p', '127.0.0.1:3082:3080', '-v', `${volume}:/data`, selected);
 start(baseImage);
 try {
   await ready();
-  assert.equal(admin('doctor').schema.user_version, 1);
-  const legacy = admin('role.create', { id: 'schema1-role', accountId: 'main', name: '迁移验收', initialPersona: '保留已有角色配置。', provider: process.env.KW_LLM_PROVIDER, model: process.env.KW_LLM_MODEL });
-  const legacyEvent = admin('event', { roleId: legacy.id, text: 'Schema 1 中保存的原始经历。' });
+  assert.equal(admin('doctor').schema.user_version, oldSchema);
+  const legacy = admin('role.create', { id: 'legacy-role', accountId: 'main', name: '迁移验收', initialPersona: '保留已有角色配置。', provider: process.env.KW_LLM_PROVIDER, model: process.env.KW_LLM_MODEL });
+  const legacyEvent = admin('event', { roleId: legacy.id, text: `Schema ${oldSchema} 中保存的原始经历。` });
   docker('stop', '-t', '30', name); docker('rm', name); start(image); await ready();
-  assert.equal(admin('doctor').schema.user_version, 2);
+  assert.equal(admin('doctor').schema.user_version, SCHEMA_VERSION);
   assert.equal(admin('role.read', { roleId: legacy.id }).state, 'disabled');
   assert.ok(admin('events', { roleId: legacy.id }).items.some(event => event.id === legacyEvent.id));
-  assert.match(docker('exec', name, 'node', '--input-type=module', '-e', "import{readdirSync}from'node:fs';if(!readdirSync('/data/kwagent').some(name=>name.includes('.schema1-')))throw new Error('缺少迁移快照');console.log('snapshot-ok');"), /snapshot-ok/);
+  assert.match(docker('exec', name, 'node', '--input-type=module', '-e', `import{readdirSync}from'node:fs';if(!readdirSync('/data/kwagent').some(name=>name.includes('.schema${oldSchema}-')))throw new Error('缺少迁移快照');console.log('snapshot-ok');`), /snapshot-ok/);
   assert.equal(docker('exec', name, 'id', '-u'), '10001');
   assert.equal(admin('doctor').database, 'ok');
   const duplicate = spawnSync('docker', ['exec', name, 'node', 'scripts/start.mjs'], { encoding: 'utf8', timeout: 10000 });
@@ -65,8 +67,8 @@ try {
   });
   assert.equal(invalidHost, 403);
   const labels = JSON.parse(docker('image', 'inspect', image))[0].Config.Labels;
-  assert.equal(labels['org.opencontainers.image.version'], '0.2.0');
-  const result = { image, commit: labels['org.opencontainers.image.revision'], schema1Migration: true, migrationSnapshot: true, originalRolePreserved: true, nonRoot: true, database: 'ok', singleInstance: true, reconnect: true, persistentEvent: event.id, payloadRestored: true, backupFiles: backup.files, restored: true, hostValidation: true };
+  assert.equal(labels['org.opencontainers.image.version'], APP_VERSION);
+  const result = { image, commit: labels['org.opencontainers.image.revision'], fromSchema: oldSchema, toSchema: SCHEMA_VERSION, migration: true, migrationSnapshot: true, originalRolePreserved: true, nonRoot: true, database: 'ok', singleInstance: true, reconnect: true, persistentEvent: event.id, payloadRestored: true, backupFiles: backup.files, restored: true, hostValidation: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/docker.json', JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
