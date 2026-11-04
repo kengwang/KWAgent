@@ -27,6 +27,7 @@ import { Operations } from './operations.ts';
 import { preparePerception } from './perception.ts';
 import { Activities, activitySchema } from './activities.ts';
 import { APP_VERSION } from '@kwagent/core';
+import { registerRolePreset } from './preset.ts';
 
 export { Plans, planRequestSchema, timingSchema } from './plans.ts';
 export { Extensions, extensionRequestSchema } from './extensions.ts';
@@ -63,6 +64,7 @@ export class Life extends Service {
   private closing = false;
   private startTask?: Promise<void>;
   private closeTask?: Promise<void>;
+  private presetTask?: Promise<void>;
   private maintenanceTask?: Promise<void>;
   private readonly sessions: Context['sessions'];
   private readonly jobs: Context['jobs'];
@@ -93,6 +95,7 @@ export class Life extends Service {
   start(): Promise<void> { this.startTask ??= this.initialize().finally(() => { this.startTask = undefined; }); return this.startTask; }
   private async initialize(): Promise<void> {
     if (this.started) return;
+    await (this.presetTask ??= registerRolePreset(this.ctx));
     await this.ctx.kwLagrange.start();
     this.started = true;
     this.startupError = null;
@@ -167,12 +170,13 @@ export class Life extends Service {
     return promise;
   }
   private async createAgent(roleId: string): Promise<AgentHandle> {
+    await (this.presetTask ??= registerRolePreset(this.ctx));
     const role = this.store.role(roleId);
     const workspace = join(this.config.dataRoot, 'workspaces', roleId);
     await mkdir(workspace, { recursive: true });
     const setup = async (agentCtx: Context, agent: Agent) => {
       installModelSelection(agentCtx);
-      await this.ctx.agentPresets.mount(agentCtx, 'standard');
+      await this.ctx.agentPresets.mount(agentCtx, 'kwagent');
       this.ctx.kwMind.attach(agentCtx, roleId);
       await this.ctx.kwLagrange.attach(agentCtx, roleId);
       registerTool(agentCtx, 'life_plan', '管理自己的目标、条件事项和唤醒安排。可以自行创建、修改、完成或取消。', planRequestSchema, input => this.plans.mutate(roleId, input));
@@ -270,7 +274,7 @@ export class Life extends Service {
     const agentOptions = { provider: role.provider, model: role.model, maxTokens: 8192 };
     const handle = exists
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
-      : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'standard' }, agentOptions, setup });
+      : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'kwagent' }, agentOptions, setup });
     this.handles.set(roleId, handle);
     const currentRole = this.store.role(roleId);
     if (currentRole.provider !== role.provider || currentRole.model !== role.model) handle.agent.model.select({ provider: currentRole.provider, model: currentRole.model });
@@ -366,9 +370,9 @@ export class Life extends Service {
     } catch (error) { if (!controller.signal.aborted) throw error; }
     finally { this.dispatching.delete(roleId); this.dispatchAbort.delete(roleId); if (this.store.pending(roleId, 1).length && !this.admission(roleId)) this.enqueue(roleId); }
   }
-  manual(roleId: string, text: string, type = 'manual'): Experience {
+  manual(roleId: string, text: string, type = 'manual', details?: { context?: { scene: 'group' | 'private'; peerId: number }; sender?: { id: number; nickname?: string } }): Experience {
     const role = this.store.role(roleId);
-    const event = this.store.appendEvent({ accountId: role.accountId, roleId, source: 'manual', type, occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: { text } }).event;
+    const event = this.store.appendEvent({ accountId: role.accountId, roleId, source: 'manual', type, occurredAt: now(), scene: details?.context?.scene ?? null, peerId: details?.context?.peerId ?? null, senderId: details?.sender?.id ?? null, messageSeq: null, self: false, payload: asJson({ text, ...(details?.sender ? { sender: details.sender } : {}) }) }).event;
     this.enqueue(roleId);
     return event;
   }

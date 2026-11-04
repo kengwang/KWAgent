@@ -64,7 +64,7 @@ export class Mind extends Service {
     const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query });
     const assembler = new BlockAssembler();
     try {
-      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], maxTokens: 1024, signal })) assembler.push(chunk);
+      for await (const chunk of this.ctx.llm.stream({ provider: role.provider, model: role.model, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], maxTokens: 4096, signal })) assembler.push(chunk);
       if (assembler.finish.kind !== 'stop') throw new Error(`查询扩展未完成：${assembler.finish.kind}`);
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
       const expanded = z.object({ queries: z.array(z.string().min(1).max(80)).max(5) }).parse(JSON.parse(text));
@@ -76,7 +76,7 @@ export class Mind extends Service {
       });
       this.store.finishOperation(operation.id, 'succeeded', asJson({ queries: expanded.queries, usage: assembler.usage ?? null }));
       return [...scores.values()].sort((a, b) => b.score - a.score).slice(0, query.limit).map(result => result.memory);
-    } catch (error) { this.store.finishOperation(operation.id, 'failed', { message: errorText(error) }); throw error; }
+    } catch (error) { this.store.finishOperation(operation.id, 'failed', await this.payloads.view(role.id, `query-error:${operation.id}`, asJson({ message: errorText(error), output: assembler.blocks(), usage: assembler.usage ?? null }), this.config.budgets.tool)); throw error; }
   }
 
   async revise(input: MemoryInput, expected: number | null, actor: string, reason: string, signal?: AbortSignal): Promise<Memory> {
@@ -154,7 +154,7 @@ export class Mind extends Service {
         }
         let manifest = this.store.get('consolidation', event.id, chunkManifestSchema);
         const body = original.payload && typeof original.payload === 'object' && !Array.isArray(original.payload) ? original.payload : {};
-        const internalTool = event.type === 'tool-result' && /^(continuity_|memory_|self_|life_plan|run_code$)/.test(String(body.name));
+        const internalTool = event.type === 'tool-result' && /^(continuity_|memory_|self_|life_plan|operation_read|capability_read|run_code$)/.test(String(body.name));
         const view = manifest ? manifest.view ?? 'original' : internalTool ? 'internal-summary' : event.type === 'internal-activity' ? 'assistant-text' : 'original';
         const message = body.message && typeof body.message === 'object' && !Array.isArray(body.message) ? body.message : {};
         const sourceView = view === 'internal-summary' ? { id: original.id, type: original.type, source: original.source, occurredAt: original.occurredAt, tool: body.name, meaning: '内部资料读取或修订。内容与来源保存在相应记录及完整负载中，不作为新的外部经历反复提取。', isError: body.isError ?? false } : view === 'assistant-text' ? { id: original.id, type: original.type, occurredAt: original.occurredAt, meaning: '角色内部文字，不代表对外发送或外部事实', content: Array.isArray(message.content) ? message.content.filter(block => block && typeof block === 'object' && !Array.isArray(block) && block.type === 'text') : [] } : original;
@@ -224,7 +224,12 @@ export class Mind extends Service {
   }
 
   attach(ctx: Context, roleId: string): void {
-    registerTool(ctx, 'continuity_read', '查询连续性：生活、关系、话头、会话判断、表达、反思和日记。id读取完整记录，history读取修订。', continuityQuerySchema, async input => input.id ? (input.history ? (this.continuity.read(roleId, input.id), this.store.history('continuity', input.id, input.limit, input.cursor || undefined)) : this.continuity.read(roleId, input.id)) : this.continuity.list(roleId, input));
+    registerTool(ctx, 'continuity_read', '查询连续性：生活、关系、话头、会话判断、表达、反思和日记。id读取完整记录，history读取修订，使用nextCursor继续读取。', continuityQuerySchema, async input => {
+      if (!input.id) return this.continuity.list(roleId, input);
+      const record = this.continuity.read(roleId, input.id); if (!input.history) return record;
+      const rows = this.store.history('continuity', input.id, input.limit + 1, input.cursor || undefined);
+      return { items: rows.slice(0, input.limit), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.revision : null };
+    });
     registerTool(ctx, 'continuity_revise', '创建或修订连续性完整资料。创建expectedRevision=null，修改需要当前revision。生活固定id=life:角色标识。thread可结束或重新开启，expression采用时status=adopted。来源与实际发送分开；followups只引用真实消息操作。reviewAt安排复核，不直接发送。', continuityRequestSchema, async (input, exec) => { exec.signal.throwIfAborted(); return this.continuity.revise(roleId, input); });
     ctx.systemPrompt.section({ name: 'deployment:continuity', order: 10210, interpolate: false, text: continuityGuidance });
     registerTool(ctx, 'payload_read', '按字节游标分页读取当前角色的完整负载，nextCursor 为 null 表示结束。', payloadReadSchema, (input, exec) => this.payloads.read(roleId, input, exec.signal));

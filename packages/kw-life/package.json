@@ -2,5 +2,5 @@
   "name": "@kwagent/kw-life", "version": "0.3.0", "type": "module",
   "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" } },
   "files": ["lib"], "engines": { "dsh": "0.2.2-alpha.2" },
-  "dependencies": { "@kwagent/core": "workspace:*", "@kwagent/kw-mind": "workspace:*", "@kwagent/kw-lagrange": "workspace:*" }
+  "dependencies": { "@kwagent/core": "workspace:*", "@kwagent/kw-mind": "workspace:*", "@kwagent/kw-lagrange": "workspace:*", "js-yaml": "4.3.2" }
 }

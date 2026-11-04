@@ -30,7 +30,7 @@ export class Continuity {
     const operation = this.store.get('operation', id, operationSchema);
     if (operation) {
       if (operation.roleId !== roleId) throw new Error('来源属于其他角色');
-      if (/^(continuity_|memory_|self_|life_plan)/.test(operation.tool)) return 'subjective';
+      if (/^(continuity_|memory_|self_|life_plan|operation_read|capability_read)/.test(operation.tool)) return 'subjective';
       return operation.state === 'succeeded' ? 'observed' : 'unconfirmed';
     }
     if (id === `role:${roleId}`) return 'setting';
@@ -41,14 +41,17 @@ export class Continuity {
     if (event.source === 'media') return /fail|error/.test(event.type) ? 'unconfirmed' : 'observed';
     if (event.type === 'tool-result') {
       const body = event.payload as Record<string, Json>;
+      const result = body.result as Record<string, Json> | null;
+      if (body.isError || result?.isError) return 'unconfirmed';
+      const value = result?.value && typeof result.value === 'object' && !Array.isArray(result.value) ? result.value : {};
+      if (value.state === 'unknown' || value.state === 'failed') return 'unconfirmed';
+      if (typeof value.operationId === 'string') { const actual = this.store.get('operation', value.operationId, operationSchema); if (actual && (actual.roleId !== roleId || actual.state !== 'succeeded')) return 'unconfirmed'; }
       if (body.name === 'run_code') {
         if (typeof body.executionId !== 'string') return 'unconfirmed';
         const children = this.store.db.prepare("SELECT id FROM events WHERE role_id=? AND type='tool-result' AND json_extract(payload,'$.parentExecutionId')=?").all(roleId, body.executionId);
         return children.some(child => this.sourceMeaning(roleId, String(child.id), seen) === 'observed') ? 'observed' : 'unconfirmed';
       }
-      if (/^(continuity_|memory_|self_|life_plan|verification_mark)/.test(String(body.name))) return 'subjective';
-      const result = body.result as Record<string, Json> | null;
-      if (body.isError || result?.isError) return 'unconfirmed';
+      if (/^(continuity_|memory_|self_|life_plan|operation_read|capability_read|verification_mark)/.test(String(body.name))) return 'subjective';
       if (result?.payloadId) return 'unconfirmed';
       return 'observed';
     }
@@ -120,14 +123,17 @@ export class Continuity {
     });
   }
   select(roleId: string, scene: ContinuityScene, budget: number, at = now()): Json {
+    const role = this.store.role(roleId);
+    const terms = [...new Set([...new Intl.Segmenter('zh', { granularity: 'word' }).segment(`${scene.query}\n${role.selfState}`)].filter(item => item.isWordLike && item.segment.length >= 2 && !/^\d+$/.test(item.segment)).map(item => item.segment.toLowerCase()))].slice(0, 100);
     const rows = this.store.db.prepare("SELECT body FROM documents WHERE kind='continuity' AND role_id=? ORDER BY updated_at DESC,id").all(roleId).map(row => continuitySchema.parse(JSON.parse(String(row.body))));
     const candidates = rows.filter(record => {
-      if (!continuityActive(record, at) || record.data.kind === 'journal') return false;
+      const closingContext = record.data.kind === 'conversation' && record.data.status === 'closed' && (!record.data.applicableAt || Date.parse(record.data.applicableAt) <= Date.parse(at)) && (!record.data.expiresAt || Date.parse(record.data.expiresAt) > Date.parse(at));
+      if ((!continuityActive(record, at) && !closingContext) || record.data.kind === 'journal') return false;
       const data = record.data;
       if (data.context && !scene.contexts.some(context => context.scene === data.context!.scene && context.peerId === data.context!.peerId)) return false;
       if (data.people.length && !data.people.some(person => scene.people.includes(person)) && !scene.recordIds.includes(record.id)) return false;
       return true;
-    }).map(record => ({ record, score: (scene.recordIds.includes(record.id) ? 100 : 0) + (record.data.context ? 30 : 0) + (record.data.people.some(person => scene.people.includes(person)) ? 20 : 0) + (record.data.kind === 'life' ? 10 : 0), lastUsed: record.data.kind === 'expression' ? this.store.meta(`expression-used:${roleId}:${record.id}`) ?? '' : '' })).sort((a, b) => b.score - a.score || a.lastUsed.localeCompare(b.lastUsed) || b.record.updatedAt.localeCompare(a.record.updatedAt));
+    }).map(record => { const text = `${record.data.title}\n${record.data.content}\n${'situations' in record.data ? record.data.situations.join('\n') : ''}`.toLowerCase(); return { record, score: (scene.recordIds.includes(record.id) ? 100 : 0) + (record.data.context ? 30 : 0) + (record.data.people.some(person => scene.people.includes(person)) ? 20 : 0) + (record.data.kind === 'life' ? 10 : 0) + Math.min(16, terms.filter(term => text.includes(term)).length * 2), lastUsed: record.data.kind === 'expression' ? this.store.meta(`expression-used:${roleId}:${record.id}`) ?? '' : '' }; }).sort((a, b) => b.score - a.score || a.lastUsed.localeCompare(b.lastUsed) || b.record.updatedAt.localeCompare(a.record.updatedAt));
     const selected: Json[] = []; const omitted: Json[] = []; let omittedCount = 0; let expressions = 0, reflections = 0;
     if (tokens(JSON.stringify({ selectedAt: at, records: [], omitted: [], omittedCount: 0 })) > budget) throw new Error('连续性必要读取信息超过上下文预算');
     for (const { record } of candidates) {

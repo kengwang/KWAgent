@@ -10,7 +10,7 @@ interface SummaryInput { readonly messages: readonly Message[]; readonly tools?:
 /** 使用公开摘要扩展位置，在任何压缩路径提交角色的未整理经历。 */
 export default class MindCompaction extends BasicCompactionEngine {
   static inject = [...BasicCompactionEngine.inject, 'kwMind'];
-  constructor(ctx: Context, config: BasicCompactionConfig) { super(ctx, { ...config, maxTokens: config.maxTokens ?? 8192 }); }
+  constructor(ctx: Context, config: BasicCompactionConfig) { super(ctx, config); }
   protected override async summarize(input: SummaryInput, agent: Agent, signal?: AbortSignal) {
     const role = this.ctx.kwMind.store.roles().find(role => role.sessionId === agent.session.id);
     if (role) await this.ctx.kwMind.consolidate(agent, role.id, signal);

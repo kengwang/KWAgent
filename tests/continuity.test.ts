@@ -51,9 +51,11 @@ test('情境选择保留情绪期限、反思期限、表达上限和私聊资�
     module.revise('alice', request({ ...base, kind: 'relationship' }));
     const reflection = module.revise('alice', request({ ...base, kind: 'reflection' }), 'alice', '2026-11-04T00:00:00.000Z'); assert.equal(reflection.data.expiresAt, '2026-11-11T00:00:00.000Z');
     for (let i = 0; i < 4; i++) module.revise('alice', request({ ...base, kind: 'expression', status: 'adopted', examples: [`表达${i}`] }));
+    const closing = module.revise('alice', request({ ...base, kind: 'conversation', status: 'closed' }));
     const scene: ContinuityScene = { eventIds: [], people: ['10001'], contexts: [{ scene: 'private', peerId: 10001 }], planIds: [], recordIds: [], query: '' };
     const selected = module.select('alice', scene, 3072, '2026-11-04T00:00:00.000Z') as { records: { data: { kind: string }; id: string }[] };
     assert.equal(selected.records.filter(record => record.data.kind === 'expression').length, 2); assert.ok(tokens(JSON.stringify(selected)) <= 3072);
+    assert.ok(selected.records.some(record => record.id === closing.id)); assert.equal(continuityActive(closing, '2026-11-04T00:00:00Z'), false);
     const group = module.select('alice', { ...scene, contexts: [{ scene: 'group', peerId: 20001 }] }, 3072, '2026-11-04T00:00:00.000Z') as { records: unknown[] }; assert.equal(group.records.length, 0);
     const expired = module.select('alice', scene, 3072, '2026-11-12T00:00:00.000Z') as { records: { id: string }[] }; assert.ok(!expired.records.some(record => record.id === reflection.id));
     assert.equal(module.read('alice', reflection.id).revision, 1);

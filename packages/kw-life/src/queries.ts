@@ -22,7 +22,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
   switch (action) {
     case 'continuity.list': {
       const input = continuityQuerySchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input;
-      const page = life.context.kwMind.continuity.list(roleId, request); return asJson({ ...page, items: preview(page.items.map(record => ({ ...record, kind: record.data.kind, title: record.data.title, status: record.data.status, content: record.data.content, people: record.data.people, context: record.data.context, expiresAt: record.data.expiresAt }))) });
+      const page = life.context.kwMind.continuity.list(roleId, request); return asJson({ ...page, items: preview(page.items.map(record => ({ ...record, kind: record.data.kind, title: record.data.title, status: record.data.status, content: record.data.content, people: record.data.people, context: record.data.context, realm: record.data.realm, expiresAt: record.data.expiresAt, read: 'continuity.read' }))) });
     }
     case 'continuity.read': {
       const input = z.object({ roleId: z.string(), id: z.string(), raw: z.boolean().default(false) }).strict().parse(value);

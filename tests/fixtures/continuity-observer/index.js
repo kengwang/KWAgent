@@ -1,5 +1,8 @@
 import { appendFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 export const name = 'kwagent-continuity-observer';
 export const inject = ['tools', 'kwLife'];
@@ -13,5 +16,12 @@ export async function apply(ctx) {
     const operation = life.store.startOperation('main', roleId, 'read_file', { path }, { callId: exec.callId, rootCallId: exec.rootCallId, executionId: life.store.invocationId(exec.token) });
     const text = await readFile(path, { encoding: 'utf8', signal: exec.signal }); life.store.finishOperation(operation.id, 'succeeded', { path, text }); return { operationId: operation.id, text };
   } });
-  ctx.tools.register({ name: 'verification_mark', description: '保存验收阶段，stage为initialized/refused/feedback/timer，text记录你的判断。', parameters: { type: 'object', properties: { stage: { type: 'string', enum: ['initialized', 'refused', 'feedback', 'timer'] }, text: { type: 'string' } }, required: ['stage', 'text'], additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async args => { await appendFile(join(directory, 'continuity-observations.jsonl'), `${JSON.stringify({ ...args, at: new Date().toISOString() })}\n`); return { recorded: true }; } });
+  ctx.tools.register({ name: 'verification_failure', description: '实际读取不存在的文件，取得真实ENOENT错误。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => readFile(join(directory, 'missing-file.txt'), 'utf8') });
+  ctx.tools.register({ name: 'verification_uncertain_write', description: '实际子进程写入本地文件后被终止，未收到确认；返回结果未知的操作ID。禁止自行重复执行。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => {
+    const target = join(directory, 'uncertain.txt'); const operation = life.store.startOperation('main', roleId, 'write_file', { path: target });
+    const worker = spawn(process.execPath, [fileURLToPath(new URL('./uncertain-worker.js', import.meta.url)), target], { stdio: 'ignore' }); const [code, signal] = await once(worker, 'exit');
+    if (code === 0) throw new Error('子进程没有按故障条件终止');
+    life.store.finishOperation(operation.id, 'unknown', { reason: '子进程在确认前终止', code, signal }); return { operationId: operation.id, state: 'unknown' };
+  } });
+  ctx.tools.register({ name: 'verification_mark', description: '保存验收阶段：initialized/refused/feedback/timer/identities/private-style/group/uncertain，text记录判断或拟表达的一句话。', parameters: { type: 'object', properties: { stage: { type: 'string', enum: ['initialized', 'refused', 'feedback', 'timer', 'identities', 'private-style', 'group', 'uncertain'] }, text: { type: 'string' } }, required: ['stage', 'text'], additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async args => { await appendFile(join(directory, 'continuity-observations.jsonl'), `${JSON.stringify({ ...args, at: new Date().toISOString() })}\n`); return { recorded: true }; } });
 }
