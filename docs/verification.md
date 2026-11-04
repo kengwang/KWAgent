@@ -51,10 +51,10 @@
 
 ## Linux 发布检查
 
-发布命令在独立测试卷中运行保留的 v0.1.0 镜像，创建旧数据库，再启动候选镜像验证 Schema 2 迁移、原有角色、非 root、原生 SQLite、单实例、对象引用、容器重启、完整备份恢复与 Host 校验。结果写入 `.artifacts/verification/docker.json`。通过后才创建版本镜像与 Git 标签。
+v0.3.0 在独立测试卷中使用保留的旧镜像创建数据，再启动候选镜像验证 Schema 3 迁移、原有角色、非 root、原生 SQLite、单实例、对象引用、容器重启、完整备份恢复与 Host 校验。本地连接验收结果写入 `.artifacts/verification/docker.json`；CI 分别验证 Schema 1、2 升级，结果写入 `.artifacts/verification/image-upgrade.json`。通过后才发布版本镜像与 Git 标签。
 
 ## 部署条件
 
 生产服务器的 HTTPS 域名与连接方式尚未提供，生产环境 TLS、Cookie、代理长连接和 Lagrange 访问签名媒体仍需在该环境执行。已有 Compose、代理模板及部署命令。
 
-GitHub 仓库配置为 `kengwang/KWAgent`（私有），GHCR 路径为 `ghcr.io/kengwang/kwagent`。自动化规则、标签含义和私密文件边界见 `docs/github.md`，远端运行结果以 GitHub Actions 记录为准。本地发布保留 v0.1.0，并使用 v0.2.0 标签、版本镜像和提交镜像标识。
+GitHub 仓库配置为 `kengwang/KWAgent`（私有），GHCR 路径为 `ghcr.io/kengwang/kwagent`。自动化规则、标签含义和私密文件边界见 `docs/github.md`，远端运行结果以 GitHub Actions 记录为准。v0.3.0 使用版本标签、版本镜像及完整提交镜像标识，保留 v0.1.0、v0.2.0 发布物。
