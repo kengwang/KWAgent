@@ -126,6 +126,7 @@ export async function apply(ctx) {
       }
       if (body.action === 'reaction-status') {
         await life.reactions.drain(id);
+        assert.equal(life.store.db.prepare("SELECT count(*) count FROM events WHERE role_id=? AND type='tool-result' AND json_extract(payload,'$.callId') LIKE 'progress:%'").get(id).count, 0, '进度回执应保留在操作记录中，不再次生成待模型整理的经历');
         return send(life.store.db.prepare("SELECT body FROM documents WHERE kind='message-reaction' AND role_id=? ORDER BY id").all(id).map(row => JSON.parse(row.body)));
       }
       if (body.action === 'replay') { for (const eventId of body.ids) life.receive(life.store.event(eventId)); return send({ replayed: body.ids.length }); }

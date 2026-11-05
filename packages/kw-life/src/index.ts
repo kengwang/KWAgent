@@ -341,6 +341,7 @@ export class Life extends Service {
       });
       agentCtx.on('agent/error', ({ error }) => { this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId) ?? []]); this.fail(error, roleId); });
       agentCtx.on('tools/post-execute', async (exec, result, next) => {
+        if (exec.name === 'mcp__lagrange__send_group_message_reaction' && String(exec.callId).startsWith('progress:')) return next();
         try {
         const nextDecision = await next(); if (nextDecision.kind !== 'accept' || 'value' in nextDecision) return nextDecision;
         const decision = { ...nextDecision };
@@ -356,6 +357,7 @@ export class Life extends Service {
         } catch (error) { if (!exec.signal.aborted) this.fail(error, roleId); throw error; }
       });
       agentCtx.on('tools/result', (exec, result) => {
+        if (exec.name === 'mcp__lagrange__send_group_message_reaction' && String(exec.callId).startsWith('progress:')) return;
         try {
         const executionId = this.store.invocationId(exec.token); const projected = this.toolViews.get(executionId); this.toolViews.delete(executionId);
         const saved = this.store.appendEvent({ id: `tool:${roleId}:${executionId}`, accountId: role.accountId, roleId, source: 'tool', type: 'tool-result', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ executionId, parentExecutionId: exec.parent ? this.store.invocationId(exec.parent) : null, callId: exec.callId, rootCallId: exec.rootCallId, name: exec.name, ...(projected ? { result: projected, isError: result.isError, ...(result.isError ? { failure: result.error } : {}) } : { arguments: exec.arguments, result }) }) }).event;
