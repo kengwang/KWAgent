@@ -18,7 +18,6 @@ import type { MilkyClient } from './client.ts';
 
 /** 媒体 Module 只发布已经登记的内容，并保存每次理解结果。 */
 export class MediaModule {
-  allowPrivateNetwork?: (roleId: string) => boolean;
   private readonly key: string;
   constructor(readonly store: Store, readonly config: AppConfig, readonly milky: MilkyClient) {
     const existing = store.meta('media-signing-key');
@@ -107,17 +106,6 @@ export class MediaModule {
     return { uri: url.href, expiresAt: new Date(expires * 1000).toISOString() };
   }
   private signature(id: string, expires: number): string { return createHmac('sha256', this.key).update(`${id}\n${expires}`).digest('hex'); }
-  isPreparedUri(roleId: string, uri: string): boolean {
-    if (uri.startsWith('base64://')) return true;
-    if (!this.config.publicUrl) return false;
-    let url: URL; try { url = new URL(uri); } catch { return false; }
-    const base = new URL('kw-media', this.config.publicUrl);
-    if (url.origin !== base.origin || url.pathname !== base.pathname) return false;
-    const id = url.searchParams.get('id') ?? '', expires = Number(url.searchParams.get('expires')), signature = url.searchParams.get('signature') ?? '';
-    if (!id || !Number.isSafeInteger(expires) || expires < Date.now() / 1000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
-    const media = this.store.get('media', id, mediaSchema);
-    return media?.roleId === roleId && timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.signature(id, expires), 'hex'));
-  }
   async serve(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const id = url.searchParams.get('id') ?? '';

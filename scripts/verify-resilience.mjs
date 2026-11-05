@@ -50,6 +50,6 @@ try {
   await stop(); await start();
   assert.equal(admin('role.read', { roleId: id }).state, 'paused'); assert.equal(sessionRecords().filter(event => event.type === 'user/message').length, countBeforeRestart);
   const observations = assistantTexts(); assert.ok(observations.some(text => text.includes('小雪'))); assert.ok(!observations.some(text => /(?:我是\s*AI|作为.*语言模型)/i.test(text)));
-  const report = { actualHarness: true, actualModel: true, actualGithubSkill: imported, actualToolAuthorization: probes, firstStepIdentity: true, inCharacter: true, backgroundDoesNotBlock: true, floodInputs: inputs.length, modelQueries: state.counts.query, handledInputsNotReplayed: true, auxiliaryFailureDeferred: true, rawPreserved: true, foregroundFallbackWorked: true, restartNoReplay: true, noSocialSends: true, root };
+  const report = { actualHarness: true, actualModel: true, actualGithubSkill: imported, actualHarnessTools: probes, firstStepIdentity: true, inCharacter: true, backgroundDoesNotBlock: true, floodInputs: inputs.length, modelQueries: state.counts.query, handledInputsNotReplayed: true, auxiliaryFailureDeferred: true, rawPreserved: true, foregroundFallbackWorked: true, restartNoReplay: true, noSocialSends: true, root };
   await mkdir('.artifacts/verification', { recursive: true }); await writeFile('.artifacts/verification/resilience.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } finally { await stop(); closeSync(log); }

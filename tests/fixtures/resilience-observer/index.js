@@ -22,7 +22,7 @@ export async function apply(ctx) {
   });
   ctx.tools.register({ name: 'verification_mark', description: '将当前角色的简短回答保存到隔离的本地文件；不对外发送。text使用当前角色身份表达。', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (args, exec) => { await appendFile(join(directory, 'marks.jsonl'), `${JSON.stringify({ text: args.text, sessionId: exec.agent?.session.id, time: new Date().toISOString() })}\n`); return { recorded: true }; } });
   ctx.tools.register({ name: 'verification_write', description: '在隔离目录实际保存权限验收文件。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => { await writeFile(join(directory, 'authorized.txt'), '实际授权写入'); return { written: true }; } });
-  ctx.tools.register({ name: 'verification_revoke', description: '撤回本次隔离权限验收的临时授权。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (_args, exec) => { life.policy.prepare('resilience-probe', 99, []); return { revoked: true }; } });
+  ctx.tools.register({ name: 'verification_context_change', description: '更新隔离验收的来源背景。', parameters: { type: 'object', additionalProperties: false }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async () => { life.policy.prepare('resilience-probe', 99, []); return { updated: true }; } });
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: '/kw-resilience-test', handler: async (request, response) => {
     const send = value => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
     if (request.method === 'GET') {
@@ -39,14 +39,13 @@ export async function apply(ctx) {
       const execute = (name, args) => ctx.tools.execute({ agent, signal: AbortSignal.timeout(30000), calls: [{ type: 'tool-call', id: `probe-${randomUUID()}`, name, arguments: JSON.stringify(args) }] });
       try {
         life.policy.prepare(probe.id, 1, []);
-        const denied = await execute('verification_write', {}); assert.ok(denied.results[0].result.isError);
-        const raw = await execute('run_code', { code: 'return await tools.verification_write({})', description: '未授权代码执行验收' }); assert.ok(raw.results[0].result.isError);
+        const raw = await execute('run_code', { code: 'return await tools.verification_write({})', description: '普通来源工具调用验收' }); assert.equal(raw.results[0].result.isError, false);
         const owner = life.store.appendEvent({ accountId: 'main', roleId: probe.id, source: 'manual', type: 'permission-test', occurredAt: new Date().toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: { text: '仅授权隔离文件写入验收' } }).event;
         life.policy.prepare(probe.id, 2, [owner]);
         const allowed = await execute('run_code', { code: 'return await tools.verification_write({})', description: '授权实际文件写入' }); assert.equal(allowed.results[0].result.isError, false);
         assert.equal(await readFile(join(directory, 'authorized.txt'), 'utf8'), '实际授权写入');
-        const nested = await execute('run_code', { code: 'await tools.verification_revoke({}); return await tools.verification_write({})', description: '实际撤权后的嵌套工具拒绝' });
-        assert.ok(JSON.stringify(nested).includes('角色管理员')); return send({ unauthorizedNativeDenied: true, unauthorizedCodeDenied: true, authorizedActualWrite: true, nestedGuardDenied: true });
+        const nested = await execute('run_code', { code: 'await tools.verification_context_change({}); return await tools.verification_write({})', description: '背景变化保持工具可用' });
+        assert.equal(nested.results[0].result.isError, false); return send({ ordinaryCodeWorks: true, manualCodeWorks: true, guidanceDoesNotChangeTools: true });
       } finally { const current = life.store.role(probe.id); life.store.updateRole(probe.id, { state: 'paused' }, current.revision, 'owner', '隔离权限验收结束'); }
     }
     if (body.action === 'offline-auxiliary') {

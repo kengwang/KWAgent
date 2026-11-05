@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import { asJson, tokens, freezeJson, perceptionFrameSchema, type PerceptionFrame, type Experience, type Json, type Payloads, type Store } from '@kwagent/core';
 import { normalizeExperience, conversationOrder, NORMALIZER_VERSION } from '@kwagent/kw-lagrange';
 
-export async function preparePerception(store: Store, payloads: Payloads, roleId: string, events: Experience[], messageId: string, budget: number, signal?: AbortSignal, trustedInput = false): Promise<PerceptionFrame> {
+export async function preparePerception(store: Store, payloads: Payloads, roleId: string, events: Experience[], messageId: string, budget: number, signal?: AbortSignal): Promise<PerceptionFrame> {
   if (events.some(event => event.roleId !== roleId)) throw new Error('感知经历属于其他角色');
   const saved = store.frame(messageId);
   if (saved !== undefined) { const frame = perceptionFrameSchema.parse(saved); if (frame.roleId !== roleId) throw new Error('感知批次属于其他角色'); return freezeJson(frame); }
   const scenes = events.filter(event => event.scene && event.peerId !== null).map(event => `${event.scene}:${event.peerId}`);
-  const recent = store.db.prepare("SELECT id FROM events WHERE role_id=? AND seq>? AND id NOT IN (SELECT value FROM json_each(?)) AND ((?=0 AND self=1) OR EXISTS(SELECT 1 FROM event_delivery d WHERE d.event_id=events.id AND d.state='completed')) AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY occurred_at DESC,seq DESC LIMIT 20").all(roleId, Number(store.meta(`context-since:${roleId}`) ?? 0), JSON.stringify(events.map(event => event.id)), Number(trustedInput), scenes.length, JSON.stringify(scenes)).map(row => store.event(String(row.id)));
+  const recent = store.db.prepare("SELECT id FROM events WHERE role_id=? AND seq>? AND id NOT IN (SELECT value FROM json_each(?)) AND (self=1 OR EXISTS(SELECT 1 FROM event_delivery d WHERE d.event_id=events.id AND d.state='completed')) AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY occurred_at DESC,seq DESC LIMIT 20").all(roleId, Number(store.meta(`context-since:${roleId}`) ?? 0), JSON.stringify(events.map(event => event.id)), scenes.length, JSON.stringify(scenes)).map(row => store.event(String(row.id)));
   const id = `frame-${createHash('sha256').update(messageId).digest('hex')}`;
   const normalize = (items: Experience[]) => conversationOrder(items).map(event => normalizeExperience(store, event));
   const full = asJson({ current: normalize(events), recent: normalize(recent) });

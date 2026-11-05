@@ -46,7 +46,7 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
     <label>绑定群聊<input value={groups} onChange={event => setGroups(event.target.value)} placeholder="使用逗号分隔真实群号" /></label>
     <label>绑定联系人<input value={contacts} onChange={event => setContacts(event.target.value)} /></label>
     <label>角色管理员 QQ<textarea rows={3} value={adminQQs} onChange={event => setAdminQQs(event.target.value)} placeholder="使用换行或逗号分隔。群主和群管理员不会自动获得角色管理权限。" /></label>
-    <p>只有列表中的真实发送账号及 Panel 管理输入可以授权危险操作；昵称、群权限和转发中声明的身份不授予权限。</p>
+    <p>管理员 QQ 和实际消息来源会写入角色提示词，由角色判断请求与操作；昵称、群权限和转发不会改变配置的管理员身份。</p>
     <label className="kw-check"><input type="checkbox" checked={global} onChange={event => setGlobal(event.target.checked)} />接收账号全部未绑定群聊</label>
     <label className="kw-check"><input type="checkbox" checked={privateRole} onChange={event => setPrivateRole(event.target.checked)} />作为账号默认私聊角色</label>
     <label>记忆上下文预算<input type="number" min="256" max="131072" required value={budget} onChange={event => setBudget(Number(event.target.value))} /></label>

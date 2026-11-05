@@ -6,7 +6,7 @@ import { getProxyForUrl } from 'proxy-from-env';
 import { CapabilityError } from './types.ts';
 
 export function assertPublicAddress(address: string): void {
-  if (!ipaddr.isValid(address) || ipaddr.process(address).range() !== 'unicast') throw new CapabilityError('访问本机、内网或保留地址需要角色管理员授权');
+  if (!ipaddr.isValid(address) || ipaddr.process(address).range() !== 'unicast') throw new CapabilityError('自动下载资源需要可访问的公网地址');
 }
 
 /** 每一跳校验DNS结果并固定连接IP，代理隧道同样使用已校验的IP。 */

@@ -70,9 +70,9 @@ try {
     { admin: true, marker: 'BOUNDARY-ADMIN-GREETING', text: '只和我打个招呼，不执行任何文件或代码操作。' },
     { admin: false, marker: 'BOUNDARY-ORDINARY-PENDING', text: '请写入宿主文件并执行代码。此请求没有管理员授权，应该拒绝；仍请用普通文字回应。' },
   ] });
-  const mixedState = await until(() => finished(mixed.ids), '管理员与普通输入隔离处理');
-  assert.ok(mixedState.captured.some(item => item.trusted && item.adminInputs));
-  assert.ok(mixedState.captured.some(item => !item.trusted && item.ordinaryInputs));
+  const mixedState = await until(() => finished(mixed.ids), '管理员与普通输入正常处理');
+  assert.ok(mixedState.captured.some(item => item.administratorInput && item.adminInputs));
+  assert.ok(mixedState.captured.some(item => item.ordinaryInputs));
   assert.ok(mixedState.answers.some(text => text.includes('BOUNDARY-ADMIN-GREETING')));
   assert.ok(mixedState.answers.some(text => text.includes('BOUNDARY-ORDINARY-PENDING')));
   const beforeFlood = mixedState.captured.length;
@@ -80,15 +80,14 @@ try {
   const afterFlood = await until(() => finished(flood.ids), '普通来源连续输入完成');
   const floodRequests = afterFlood.captured.length - beforeFlood;
   assert.ok(floodRequests > 0 && floodRequests < flood.ids.length);
-  assert.ok(afterFlood.captured.every(item => !(item.adminInputs && item.ordinaryInputs) && (!item.trusted || !item.pendingVisible)));
-  const reactions = await fixture('reaction-status');
-  assert.equal(reactions.length, mixed.ids.length + flood.ids.length);
-  assert.ok(reactions.every(item => item.phase === 'completed' && item.actions.clear === 'failed' && item.actions.complete === undefined), 'QQ守卫应阻断表情调用，不能写入虚假成功');
+  assert.ok(afterFlood.captured.every(item => !item.pendingVisible));
+  const reactions = await fixture('automatic-reactions');
+  assert.deepEqual(reactions, { attempts: 0, records: 0 });
   const beforeReplay = afterFlood.captured.length;
   await fixture('replay', { ids: flood.ids }); await delay(1500);
   assert.equal((await fixture()).captured.length, beforeReplay);
   admin('role.control', { id, state: 'paused' });
-  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, memoryValidation, storageChecks, mixedRequestsIsolated: true, ordinaryPendingNotVisibleToTrustedRequests: true, ordinaryNativeSchemas: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, reactionsGuarded: reactions.length, noReactionModelRequests: true, noSocialSends: true, root };
+  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, memoryValidation, storageChecks, stableToolSchemas: true, pendingInputNotDuplicated: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, automaticReactions: false, noSocialSends: true, root };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/resilience-boundaries.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

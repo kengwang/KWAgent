@@ -42,7 +42,7 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
-v0.5.1 为正在处理的群消息添加 `424`，正常完成后取消 `424` 并添加 `282`，使用原消息序号并保存回执。重复事件和自身表情事件不会再次触发处理，见 [发布说明](docs/releases/v0.5.1.md)。
+v0.5.2 统一使用 Harness 的固定 PTC 工具模式，管理员与操作判断通过提示词提供，消息进度保存在活动记录中。调用方式与角色配置见 [角色 Skill、身份与管理员](docs/role-skills-and-authority.md)。
 
 v0.5.0 增加每角色的预注入 Skill、GitHub Skill 导入和管理员 QQ 配置。真实身份在首次模型请求前准备，已处理事件持久确认，记忆后台整理与前台交流独立推进。配置及权限规则见 [角色 Skill、身份与管理员](docs/role-skills-and-authority.md)，变更见 [发布说明](docs/releases/v0.5.0.md)。
 

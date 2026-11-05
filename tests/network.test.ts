@@ -79,7 +79,7 @@ test('真实HTTP资源在普通请求中拒绝内网，授权下载保持内容�
   assert.ok(address && typeof address === 'object');
   const uri = `http://localhost:${address.port}/resource`;
   try {
-    await assert.rejects(downloadResource(uri, { maxBytes: 1024, signal: AbortSignal.timeout(5000) }), /管理员/);
+    await assert.rejects(downloadResource(uri, { maxBytes: 1024, signal: AbortSignal.timeout(5000) }), /公网/);
     assert.equal(requests, 0);
     const resource = await downloadResource(uri, { maxBytes: 1024, allowPrivate: true, signal: AbortSignal.timeout(5000) });
     assert.equal(resource.ok, true);

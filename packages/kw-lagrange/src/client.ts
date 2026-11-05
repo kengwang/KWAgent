@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { asJson, APP_VERSION, CapabilityError, errorText, jsonSchema, now, Store, toolConversation } from '@kwagent/core';
 import type { AppConfig, Json, Operation, Payloads } from '@kwagent/core';
 import { Capabilities } from './capabilities.ts';
-import { assertCharacterSpeech } from './character.ts';
 
 const schemaObject = z.object({ type: z.literal('object') }).catchall(jsonSchema);
 export const milkyToolSchema = z.object({
@@ -130,7 +129,6 @@ export class MilkyClient {
   }
   async execute(name: string, args: Record<string, unknown>, roleId: string | null, signal?: AbortSignal, correlation?: { callId: string; rootCallId: string; executionId?: string }) {
     assertSupportedMessage(name, args);
-    if (roleId) assertCharacterSpeech(name, args);
     const tool = this.tools.find(tool => tool.name === name);
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;

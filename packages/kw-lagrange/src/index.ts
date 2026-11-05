@@ -106,7 +106,7 @@ export class Lagrange extends Service {
     }
     registerTool(ctx, 'media_prepare', '登记当前角色的媒体，并生成远程 Lagrange 可访问的发送 URI。resourceId 会查询新的资源地址。', z.object({ mediaId: z.string().optional(), uri: z.string().optional(), resourceId: z.string().optional(), name: z.string().optional(), eventId: z.string().optional(), mode: z.enum(['url', 'base64']).default('url') }), async (input, exec) => {
       const uri = input.resourceId ? await this.media.resourceUrl(input.resourceId, exec.signal) : input.uri;
-      const media = input.mediaId ? this.media.store.media(input.mediaId) : uri ? await this.media.import(roleId, uri, input.name, input.eventId, exec.signal, this.media.allowPrivateNetwork?.(roleId) ?? false) : undefined;
+      const media = input.mediaId ? this.media.store.media(input.mediaId) : uri ? await this.media.import(roleId, uri, input.name, input.eventId, exec.signal, true) : undefined;
       if (!media) throw new Error('需要提供 mediaId、resourceId 或 uri');
       return { media, ...await this.media.prepare(roleId, media.id, input.mode) };
     });
