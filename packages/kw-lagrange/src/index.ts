@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { Ajv } from 'ajv';
 import { createHash } from 'node:crypto';
 import { asJson, jsonSchema, loadConfig, operationSchema, registerTool, errorText, now, milkyId } from '@kwagent/core';
-import type { Experience } from '@kwagent/core';
+import type { Experience, Json } from '@kwagent/core';
 import { MilkyClient, isAccountMutation, assertSupportedMessage, messageSendTools, markdownUnsupported } from './client.ts';
 import { MilkyEvents } from './events.ts';
 import { MediaModule } from './media.ts';
@@ -33,6 +33,7 @@ export class Lagrange extends Service {
   private readonly mediaAbort = new AbortController();
   private closeTask?: Promise<void>;
   private readonly ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false });
+  private readonly ownMembership = new Map<string, { at: number; value: Json }>();
   constructor(ctx: Context) {
     super(ctx, 'kwLagrange');
     const config = loadConfig();
@@ -105,7 +106,7 @@ export class Lagrange extends Service {
     }
     registerTool(ctx, 'media_prepare', '登记当前角色的媒体，并生成远程 Lagrange 可访问的发送 URI。resourceId 会查询新的资源地址。', z.object({ mediaId: z.string().optional(), uri: z.string().optional(), resourceId: z.string().optional(), name: z.string().optional(), eventId: z.string().optional(), mode: z.enum(['url', 'base64']).default('url') }), async (input, exec) => {
       const uri = input.resourceId ? await this.media.resourceUrl(input.resourceId, exec.signal) : input.uri;
-      const media = input.mediaId ? this.media.store.media(input.mediaId) : uri ? await this.media.import(roleId, uri, input.name, input.eventId, exec.signal) : undefined;
+      const media = input.mediaId ? this.media.store.media(input.mediaId) : uri ? await this.media.import(roleId, uri, input.name, input.eventId, exec.signal, this.media.allowPrivateNetwork?.(roleId) ?? false) : undefined;
       if (!media) throw new Error('需要提供 mediaId、resourceId 或 uri');
       return { media, ...await this.media.prepare(roleId, media.id, input.mode) };
     });
@@ -114,6 +115,26 @@ export class Lagrange extends Service {
   socialContext(roleId: string, contexts: { scene: 'group' | 'private'; peerId: number }[]) {
     const since = this.media.store.meta(`context-since-time:${roleId}`);
     return this.media.store.operations(roleId, 200).filter(operation => /^send_(group|private|temp)_message$/.test(operation.tool) && (!since || operation.startedAt >= since || operation.state === 'unknown')).map(operation => ({ ...operation, context: this.ctx.kwMind.payloads.operationContext(operation) })).filter(operation => !contexts.length || operation.context && contexts.some(context => context.scene === operation.context!.scene && context.peerId === operation.context!.peerId)).slice(0, 12).map(operation => ({ id: operation.id, tool: operation.tool, state: operation.state, context: operation.context, startedAt: operation.startedAt, endedAt: operation.endedAt, read: 'operation_read', meaning: operation.state === 'unknown' ? '可能已经产生远程效果，需要核实，不能自动重放' : '真实操作回执，交流动机另外保存' }));
+  }
+  async identityContext(roleId: string, contexts: { scene: 'group' | 'private'; peerId: number }[], signal?: AbortSignal): Promise<Json> {
+    const role = this.media.store.role(roleId);
+    const raw = this.media.store.meta(`milky:${role.accountId}:identity`);
+    if (!raw || role.accountId !== this.client.accountId || !this.client.selfId) throw new Error('当前角色的QQ账号身份尚未确认');
+    const account = JSON.parse(raw);
+    const groups: Json[] = [];
+    for (const groupId of new Set(contexts.filter(context => context.scene === 'group').map(context => context.peerId))) {
+      const key = `${this.client.selfId}:${groupId}`;
+      const cached = this.ownMembership.get(key);
+      if (cached && Date.now() - cached.at < 60000) { groups.push(cached.value); continue; }
+      let value: Json;
+      try {
+        const result = z.object({ member: z.object({ user_id: z.number().int().positive(), nickname: z.string().optional(), card: z.string().optional() }).passthrough() }).parse(await this.client.call('get_group_member_info', { group_id: groupId, user_id: this.client.selfId }, signal));
+        if (result.member.user_id !== this.client.selfId) throw new Error('群成员查询返回了其他账号');
+        value = asJson({ groupId, state: 'confirmed', member: result.member, observedAt: now(), sourceTool: 'get_group_member_info' });
+      } catch (error) { signal?.throwIfAborted(); value = { groupId, state: 'unavailable', message: errorText(error), observedAt: now() }; }
+      this.ownMembership.set(key, { at: Date.now(), value }); groups.push(value);
+    }
+    return asJson({ roleId, roleName: role.name, account, groups, instruction: 'account.userId是当前角色实际使用的QQ账号。提及该账号、引用该账号消息以及向该账号发来的私聊均可能是在与你互动；结合内容决定回应。人物以账号识别，同名、群主身份和角色名称不改变当前登录账号。群名片与昵称是带时间的资料。' });
   }
   close(): Promise<void> { this.closeTask ??= this.stop(); return this.closeTask; }
   private async stop(): Promise<void> { await this.events.close(); this.mediaAbort.abort(); await this.mediaQueue.catch(error => { if (!this.mediaAbort.signal.aborted) throw error; }); await this.client.close(); this.received.removeAllListeners(); }

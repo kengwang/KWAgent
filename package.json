@@ -1,6 +1,6 @@
 {
   "name": "kwagent",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.4.2",
@@ -47,6 +47,7 @@
     "@types/js-yaml": "4.0.9",
     "@types/node": "24.19.2",
     "@types/proper-lockfile": "4.1.4",
+    "@types/proxy-from-env": "1.0.4",
     "@types/range-parser": "1.2.7",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

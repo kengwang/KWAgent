@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { asJson, APP_VERSION, CapabilityError, errorText, jsonSchema, now, Store, toolConversation } from '@kwagent/core';
 import type { AppConfig, Json, Operation, Payloads } from '@kwagent/core';
 import { Capabilities } from './capabilities.ts';
+import { assertCharacterSpeech } from './character.ts';
 
 const schemaObject = z.object({ type: z.literal('object') }).catchall(jsonSchema);
 export const milkyToolSchema = z.object({
@@ -107,11 +108,12 @@ export class MilkyClient {
       if (!tools.some(tool => tool.name === required)) throw new Error(`Milky 缺少所需工具：${required}`);
     }
     this.tools = tools;
-    const login = z.object({ uin: z.number().int().positive().safe() }).passthrough().parse(await this.call('get_login_info', {}, signal));
+    const login = z.object({ uin: z.number().int().positive().safe(), nickname: z.string().default('') }).passthrough().parse(await this.call('get_login_info', {}, signal));
     this.selfId = login.uin;
     this.status = { state: 'connected', since: now(), error: null };
     this.store.setMeta(`milky:${this.accountId}:tools`, JSON.stringify(tools));
     this.store.setMeta(`milky:${this.accountId}:self`, String(this.selfId));
+    this.store.setMeta(`milky:${this.accountId}:identity`, JSON.stringify({ accountId: this.accountId, userId: login.uin, nickname: login.nickname, observedAt: now(), sourceTool: 'get_login_info' }));
   }
 
   async rawCall(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
@@ -128,6 +130,7 @@ export class MilkyClient {
   }
   async execute(name: string, args: Record<string, unknown>, roleId: string | null, signal?: AbortSignal, correlation?: { callId: string; rootCallId: string; executionId?: string }) {
     assertSupportedMessage(name, args);
+    if (roleId) assertCharacterSpeech(name, args);
     const tool = this.tools.find(tool => tool.name === name);
     if (!tool) throw new Error(`Milky 工具不存在：${name}`);
     const write = tool.annotations?.readOnlyHint !== true;

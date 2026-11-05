@@ -7,7 +7,7 @@ import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 
 export const readActions = new Set(['status', 'doctor', 'history', 'revision.read', 'events', 'memory.list', 'source.read', 'payload.read', 'payload.links', 'role.read', 'persona.read', 'activity.list', 'activity.read', 'sources.list', 'people.list', 'people.memories', 'capability.read', 'memory.read', 'memory.detail', 'records.list', 'perception.read', 'record.read', 'record.detail', 'session.read', 'session.records']);
 
-for (const action of ['continuity.list', 'continuity.read']) readActions.add(action);
+for (const action of ['continuity.list', 'continuity.read', 'skill.list']) readActions.add(action);
 
 /** 管理查询统一校验分页并只返回列表摘要，正文读取独立执行。 */
 export async function query(life: Life, action: string, value: Json): Promise<Json | undefined> {

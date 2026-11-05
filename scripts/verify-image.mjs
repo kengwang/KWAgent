@@ -34,8 +34,9 @@ try {
   assert.equal(ready, true, 'Harness 管理界面未就绪，诊断位于 /data/tmp/image-smoke.log');
   assert.equal(admin('doctor').database, 'ok');
   if (process.env.KW_TEST_SCHEMA) { assert.equal(admin('role.read', { roleId: 'legacy-image' }).state, 'disabled'); assert.ok((await readdir('/data/kwagent')).some(name => name.includes(`.schema${process.env.KW_TEST_SCHEMA}-`))); }
-  const role = admin('role.create', { id: 'image-smoke', accountId: 'main', name: '镜像验证', initialPersona: '仅保存本地构建验证记录。', provider: 'deepseek-official', model: 'configured-at-deployment' });
+  const role = admin('role.create', { id: 'image-smoke', accountId: 'main', name: '镜像验证', initialPersona: '仅保存本地构建验证记录。', provider: 'deepseek-official', model: 'configured-at-deployment', preinjectSkills: ['kwagent-life', 'lagrange'], adminQQs: [10001] });
   assert.equal(role.state, 'disabled');
+  assert.deepEqual(role.preinjectSkills, ['kwagent-life', 'lagrange']); assert.deepEqual(role.adminQQs, [10001]); assert.deepEqual(admin('skill.list', { roleId: role.id }), []);
   const event = admin('event', { roleId: role.id, text: '镜像中的 SQLite、Session 管理与对象目录可写。' });
   const source = admin('source.read', { roleId: role.id, id: event.id });
   const continuity = admin('continuity.revise', { roleId: role.id, expectedRevision: null, data: { kind: 'thread', title: '镜像中的持续事项', content: '验证连续性备份恢复。', sources: [event.id] }, reason: '断网镜像验收' });
@@ -60,7 +61,7 @@ try {
   const backup = admin('backup');
   const restored = spawnSync(process.execPath, ['scripts/admin.mjs', 'restore', backup.directory, '/data/tmp/image-restored'], { encoding: 'utf8', timeout: 20000 }); assert.equal(restored.status, 0, restored.stderr);
   const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
-  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
+  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.deepEqual(store.role(role.id).preinjectSkills, role.preinjectSkills); assert.deepEqual(store.role(role.id).adminQQs, role.adminQQs); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
   admin('shutdown');
   const result = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error('Harness 未在期限内停止'); })]); assert.equal(result[0], 0);
   console.log(JSON.stringify({ nonRoot: true, node: process.versions.node, harness: true, database: true, payload: true, singleInstance: true, backupRestore: true, noExternalNetwork: true }));

@@ -20,6 +20,8 @@ export const roleSchema = z.object({
   initialPersona: z.string().min(1), persona: z.string().min(1),
   selfState: z.string().default(''), worldMode: realmSchema.default('real'),
   expressionExamples: z.array(z.string().min(1)).default([]),
+  preinjectSkills: z.array(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Skill 名称使用小写字母、数字和连字符')).refine(names => new Set(names).size === names.length, '预注入 Skill 名称不能重复').default([]),
+  adminQQs: z.array(z.number().int().positive().safe()).refine(ids => new Set(ids).size === ids.length, '角色管理员 QQ 不能重复').default([]),
   personaSources: z.array(z.string()).default([]),
   provider: z.string().min(1), model: z.string().min(1),
   state: desiredStateSchema.default('disabled'), revision: z.number().int().positive().default(1),
@@ -35,7 +37,7 @@ export const roleSchema = z.object({
 });
 export type Role = z.infer<typeof roleSchema>;
 export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true, personaSources: true, deletedAt: true })
-  .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
+  .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), preinjectSkills: roleSchema.shape.preinjectSkills.optional(), adminQQs: roleSchema.shape.adminQQs.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
 export type RoleInput = z.infer<typeof roleInputSchema>;
 
 export const eventSchema = z.object({
@@ -126,6 +128,7 @@ export class CapabilityError extends Error {
   readonly code = 'capability_unavailable';
 }
 export class EvidenceError extends Error {}
+export class PersistenceError extends Error { readonly code = 'persistence_failure'; }
 export function now(): string { return new Date().toISOString(); }
 export function asJson(value: unknown): Json { return jsonSchema.parse(value); }
 export function errorText(error: unknown): string {

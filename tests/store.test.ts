@@ -64,6 +64,21 @@ test('消息去重、历史核对位置与事务撤销', () => {
   } finally { store.close(); }
 });
 
+test('已处理投递不能被迟到写入降级，重复收信和重启不会重新排队', () => {
+  const store = database();
+  try {
+    store.createRole(role('alice'));
+    const input = { accountId: 'main', roleId: 'alice', source: 'milky' as const, type: 'message_receive', occurredAt: now(), scene: 'group', peerId: 123, senderId: 456, messageSeq: 99, self: false, payload: { text: '只处理一次' } };
+    const first = store.appendEvent(input).event;
+    store.delivery([first.id], 'stable-input', 'prepared'); store.completeDelivered('alice', ['stable-input']);
+    store.delivery([first.id], 'late-preparation', 'prepared'); store.delivery([first.id], 'late-delivery', 'delivered');
+    assert.deepEqual(store.deliveryStatus(first.id), { messageId: 'stable-input', state: 'completed' });
+    assert.equal(store.appendEvent(input).inserted, false); store.recoverDeliveries('alice', []);
+    assert.equal(store.pending('alice').length, 0); const path = store.path; store.close();
+    const reopened = new Store(path); assert.equal(reopened.deliveryStatus(first.id).state, 'completed'); assert.equal(reopened.pending('alice').length, 0); reopened.close();
+  } finally { store.close(); }
+});
+
 test('中文全文检索、来源版本和备份在真实数据库提交', async () => {
   const store = database();
   try {

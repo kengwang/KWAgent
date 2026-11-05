@@ -9,7 +9,7 @@ export class Continuity {
   constructor(readonly store: Store, readonly payloads: Payloads, readonly config: AppConfig) {}
   read(roleId: string, id: string): ContinuityRecord {
     const record = this.store.get('continuity', id, continuitySchema);
-    if (!record || record.roleId !== roleId) throw new Error('连续性记录不存在或属于其他角色');
+    if (!record || record.roleId !== roleId) throw new EvidenceError('连续性记录不存在或属于其他角色');
     return record;
   }
   list(roleId: string, request: Partial<ContinuityQuery> = {}) {
@@ -65,6 +65,7 @@ export class Continuity {
     return 'subjective';
   }
   assertMemory(memory: MemoryInput): void {
+    this.store.validateSources(memory.roleId, memory.sources);
     if (memory.epistemic !== 'observed') return;
     if (!memory.sources.some(source => ['observed', 'reported'].includes(this.sourceMeaning(memory.roleId, source)))) throw new EvidenceError(`内部想法、设定与未确认执行不能作为亲历事实：${memory.title}；来源 ${memory.sources.join(',')}。请保留来源并使用inferred，或根据真实子调用来源判断。`);
   }
@@ -72,9 +73,9 @@ export class Continuity {
     const input = continuityRequestSchema.parse(request); const role = this.store.role(roleId);
     const id = input.id ?? (input.data.kind === 'life' ? `life:${roleId}` : randomUUID());
     const previous = this.store.get('continuity', id, continuitySchema);
-    if (previous && previous.roleId !== roleId) throw new Error('连续性记录属于其他角色');
-    if (previous && previous.data.kind !== input.data.kind) throw new Error('记录类型不能通过修订改变');
-    if (input.data.kind === 'life' && id !== `life:${roleId}`) throw new Error('当前生活记录使用角色的固定标识');
+    if (previous && previous.roleId !== roleId) throw new EvidenceError('连续性记录属于其他角色');
+    if (previous && previous.data.kind !== input.data.kind) throw new EvidenceError('记录类型不能通过修订改变');
+    if (input.data.kind === 'life' && id !== `life:${roleId}`) throw new EvidenceError('当前生活记录使用角色的固定标识');
     if ((previous?.revision ?? null) !== input.expectedRevision) throw new ConflictError(previous ? asJson(previous) : null);
     return this.store.transaction(() => {
       const data = input.data; const suppliedSources = [...data.sources];
@@ -83,40 +84,40 @@ export class Continuity {
       if ('reviewAt' in data && data.reviewAt) data.reviewAt = new Date(data.reviewAt).toISOString();
       if (data.kind === 'thread' && data.expectedAt) data.expectedAt = new Date(data.expectedAt).toISOString();
       const declaration = this.store.startOperation(role.accountId, roleId, 'continuity_revise', asJson({ id, kind: data.kind, actor, reason: input.reason, meaning: '声明或主观认识，不证明外部执行成功' }));
-      if (!data.sources.length && actor === 'consolidator') throw new Error('自动整理必须提供真实来源');
+      if (!data.sources.length && actor === 'consolidator') throw new EvidenceError('自动整理必须提供真实来源');
       data.sources = [...new Set([...data.sources, declaration.id])];
       this.store.validateSources(roleId, data.sources, false);
-      for (const memoryId of data.memories) if (this.store.memory(memoryId).roleId !== roleId) throw new Error('关联记忆属于其他角色');
-      for (const planId of data.plans) if (this.store.plan(planId).roleId !== roleId) throw new Error('关联计划属于其他角色');
-      for (const other of data.relatedRecords) { if (other === id) throw new Error('记录不能关联自身'); this.read(roleId, other); }
-      if (role.worldMode === 'real' && data.realm !== 'real') throw new Error('现实角色的生活记录需要使用现实情境');
-      if (data.applicableAt && data.expiresAt && Date.parse(data.applicableAt) >= Date.parse(data.expiresAt)) throw new Error('失效时间需要晚于适用时间');
-      if ('reviewAt' in data && data.reviewAt && data.applicableAt && Date.parse(data.reviewAt) < Date.parse(data.applicableAt)) throw new Error('复核时间不能早于适用时间');
+      for (const memoryId of data.memories) if (this.store.memory(memoryId).roleId !== roleId) throw new EvidenceError('关联记忆属于其他角色');
+      for (const planId of data.plans) if (this.store.plan(planId).roleId !== roleId) throw new EvidenceError('关联计划属于其他角色');
+      for (const other of data.relatedRecords) { if (other === id) throw new EvidenceError('记录不能关联自身'); this.read(roleId, other); }
+      if (role.worldMode === 'real' && data.realm !== 'real') throw new EvidenceError('现实角色的生活记录需要使用现实情境');
+      if (data.applicableAt && data.expiresAt && Date.parse(data.applicableAt) >= Date.parse(data.expiresAt)) throw new EvidenceError('失效时间需要晚于适用时间');
+      if ('reviewAt' in data && data.reviewAt && data.applicableAt && Date.parse(data.reviewAt) < Date.parse(data.applicableAt)) throw new EvidenceError('复核时间不能早于适用时间');
       if (data.kind === 'life') {
         if (data.activity) {
           this.store.validateSources(roleId, data.activity.sources.length ? data.activity.sources : data.sources, false);
           if (data.realm === 'real' && ['in_progress', 'completed'].includes(data.activity.state) && !(data.activity.sources.length ? data.activity.sources : data.sources).some(source => this.sourceMeaning(roleId, source) === 'observed')) throw new EvidenceError('现实活动进展需要已观察的执行依据，不能引用PTC父结果或内部声明替代实际子调用');
         }
         data.emotions = data.emotions.map(emotion => ({ ...emotion, formedAt: new Date(emotion.formedAt).toISOString(), expiresAt: emotion.expiresAt ? new Date(emotion.expiresAt).toISOString() : new Date(Date.parse(emotion.formedAt) + 86400000).toISOString() }));
-        if (data.emotions.some(emotion => Date.parse(emotion.expiresAt!) <= Date.parse(emotion.formedAt))) throw new Error('情绪失效时间需要晚于形成时间');
+        if (data.emotions.some(emotion => Date.parse(emotion.expiresAt!) <= Date.parse(emotion.formedAt))) throw new EvidenceError('情绪失效时间需要晚于形成时间');
       }
       if (data.kind === 'reflection' && data.expiresAt === null) data.expiresAt = new Date(Date.parse(clock) + 7 * 86400000).toISOString();
-      if (data.kind === 'expression' && !data.sources.some(source => this.sourceMeaning(roleId, source) !== 'subjective')) throw new Error('表达实例需要实际交流来源');
-      if (data.kind === 'relationship' && !data.people.length) throw new Error('关系理解需要实际账号标识');
-      if (data.kind === 'conversation' && !data.context) throw new Error('会话判断需要会话情境');
+      if (data.kind === 'expression' && !data.sources.some(source => this.sourceMeaning(roleId, source) !== 'subjective')) throw new EvidenceError('表达实例需要实际交流来源');
+      if (data.kind === 'relationship' && !data.people.length) throw new EvidenceError('关系理解需要实际账号标识');
+      if (data.kind === 'conversation' && !data.context) throw new EvidenceError('会话判断需要会话情境');
       if (data.kind === 'thread') {
         const seen = new Set<string>();
         for (const followup of data.followups) {
-          if (seen.has(followup.operationId)) throw new Error('同一回执不能重复计入承接记录'); seen.add(followup.operationId);
+          if (seen.has(followup.operationId)) throw new EvidenceError('同一回执不能重复计入承接记录'); seen.add(followup.operationId);
           const operation = this.store.get('operation', followup.operationId, operationSchema);
-          if (!operation || operation.roleId !== roleId || !/^send_(group|private|temp)_message$/.test(operation.tool)) throw new Error('承接记录需要当前角色的消息操作');
-          if (operation.state === 'failed' || operation.state === 'started') throw new Error('承接操作尚未取得有效回执');
+          if (!operation || operation.roleId !== roleId || !/^send_(group|private|temp)_message$/.test(operation.tool)) throw new EvidenceError('承接记录需要当前角色的消息操作');
+          if (operation.state === 'failed' || operation.state === 'started') throw new EvidenceError('承接操作尚未取得有效回执');
           const target = this.payloads.operationContext(operation);
-          if (data.context && target && (data.context.scene !== target.scene || data.context.peerId !== target.peerId)) throw new Error('承接回执与话头会话不一致');
-          if (!target && !followup.pending) throw new Error('回执会话未记录，需要明确以pending=true保存待核实关联');
+          if (data.context && target && (data.context.scene !== target.scene || data.context.peerId !== target.peerId)) throw new EvidenceError('承接回执与话头会话不一致');
+          if (!target && !followup.pending) throw new EvidenceError('回执会话未记录，需要明确以pending=true保存待核实关联');
           if (operation.state === 'unknown') followup.pending = true;
         }
-        if (previous?.data.kind === 'thread' && ['resolved', 'declined', 'cancelled', 'expired'].includes(previous.data.status) && ['active', 'deferred'].includes(data.status) && !suppliedSources.some(source => !previous.data.sources.includes(source))) throw new Error('重新开启话头需要新的来源');
+        if (previous?.data.kind === 'thread' && ['resolved', 'declined', 'cancelled', 'expired'].includes(previous.data.status) && ['active', 'deferred'].includes(data.status) && !suppliedSources.some(source => !previous.data.sources.includes(source))) throw new EvidenceError('重新开启话头需要新的来源');
       }
       const activityId = this.store.meta(`activity:${roleId}`) || null;
       const record = continuitySchema.parse({ id, roleId, data, revision: (previous?.revision ?? 0) + 1, createdAt: previous?.createdAt ?? clock, updatedAt: clock, actor, reason: input.reason, activityId });

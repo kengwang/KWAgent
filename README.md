@@ -42,6 +42,8 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
+v0.5.0 增加每角色的预注入 Skill、GitHub Skill 导入和管理员 QQ 配置。真实身份在首次模型请求前准备，已处理事件持久确认，记忆后台整理与前台交流独立推进。配置及权限规则见 [角色 Skill、身份与管理员](docs/role-skills-and-authority.md)，变更见 [发布说明](docs/releases/v0.5.0.md)。
+
 v0.3.0 的生活、人物关系、未完话头、情境表达和自我反思见 [连续性说明](docs/continuity.md)。新增资料沿用实际来源、修订号和步骤快照；时间事项用于重新判断，发送仍由角色选择。
 
 v0.3.1 提供 `kwagent-life` 运行 Skill，并修复负载预览的来源语义和收尾整理阻塞新输入的问题，见 [发布说明](docs/releases/v0.3.1.md)。

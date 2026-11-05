@@ -12,14 +12,14 @@ import { useEffect, useState } from 'react';
 import type { Role, Memory, LifePlan, Experience, Operation, Json, Extension } from '@kwagent/core';
 import contribution from '@kwagent/kw-panel/remote';
 import styles from './style.css?inline';
-import { RoleForm, PlanForm } from './forms.tsx';
+import { RoleForm, PlanForm, RoleSkillForm } from './forms.tsx';
 import { Timeline, EventHistory, People, CapabilityList, DetailReader, PageNotice, useRecords, type Detail } from './views.tsx';
 import { ContinuityView } from './continuity.tsx';
 
 interface Snapshot {
   version: string; truncated: boolean;
   revision: number; rolesGeneration: number; maintenance: boolean; started: boolean; startupError: string | null;
-  roles: (Role & { runtime: { state: string; error: string | null }; usage: { requests: number; tokens: number } })[];
+  roles: (Role & { runtime: { state: string; error: string | null }; usage: { requests: number; tokens: number }; memoryStatus?: { status: string; reason?: string; retryAt?: number } | null })[];
   events: Experience[]; memories: Memory[]; plans: LifePlan[]; operations: Operation[]; extensions: Extension[];
   connections: Record<string, { state: string; error: string | null }>; config: { vision: { model: string | null }; chat: { model: string | null; provider: string } };
 }
@@ -108,6 +108,7 @@ function Panel({ ctx }: { ctx: Context }) {
         {role && <div className="kw-actions"><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'reset', role }); }}>重置对话</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'delete', role }); }}>删除角色</Button></div>}
       </header>
       {notice && <p role="status">{notice}</p>}
+      {role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，群聊继续运行，空闲后重新整理。</p>}
       {roleAction && <section className="kw-error" role="dialog" aria-labelledby="kw-role-action-title">
         <h3 id="kw-role-action-title">{roleAction.kind === 'reset' ? '重置当前对话' : '删除角色'}</h3>
         <p>{roleAction.kind === 'reset' ? `为 ${roleAction.role.name} 创建空白会话，保留人设、长期记忆、人物关系和角色目标与安排。当前活动、后台任务及原会话的原生提醒将停止，未接纳的外部消息继续保留。` : `停止 ${roleAction.role.name}，解除会话绑定并取消后续安排。原始经历、记忆与修订历史保留；角色标识为历史归属保留，重新创建时使用新标识。`}</p>
@@ -142,6 +143,7 @@ function Panel({ ctx }: { ctx: Context }) {
         {tab === '能力' && <>
           <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>视觉：{snapshot.config.vision.model ?? '尚未配置'}</p><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
           <CapabilityList revision={snapshot.revision} call={call} open={open} /><h3>自主扩展</h3><ExtensionForm roleId={roleId} call={call} />
+          {role && <RoleSkillForm key={role.id} roleId={role.id} revision={role.revision} call={call} />}
           <PageNotice page={extensionPage} />
           {extensionPage.items.map(extension => <article className="kw-entry" key={`${extension.roleId}:${extension.id}`}><h3>{extension.packageName}</h3><p>{extension.state}</p><Button onClick={() => act('extension', { roleId: extension.roleId, request: { action: extension.enabled ? 'disable' : 'enable', id: extension.id } })}>{extension.enabled ? '停用' : '启用'}</Button></article>)}
           {extensionPage.nextCursor !== null && <Button onClick={extensionPage.more}>读取更多扩展</Button>}

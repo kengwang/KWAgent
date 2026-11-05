@@ -79,6 +79,7 @@ export class RoleLifecycle {
       if (role.state !== 'paused') role = store.updateRole(role.id, { state: 'paused' }, role.revision, 'owner', input.reason);
       await this.life.retireRole(role.id);
       await this.life.extensions.drain(role.id);
+      await this.life.roleSkills.drain(role.id);
       await this.life.plans.detachSession(role.id, input.from);
       if (input.kind === 'reset') {
         if (role.sessionId === input.from) {

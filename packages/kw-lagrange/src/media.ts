@@ -11,13 +11,14 @@ import OpenAI from 'openai';
 import sharp from 'sharp';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
-import { asJson, CapabilityError, errorText, now, mediaSchema } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, mediaSchema, downloadResource } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Media, Store } from '@kwagent/core';
 import { z } from 'zod';
 import type { MilkyClient } from './client.ts';
 
 /** 媒体 Module 只发布已经登记的内容，并保存每次理解结果。 */
 export class MediaModule {
+  allowPrivateNetwork?: (roleId: string) => boolean;
   private readonly key: string;
   constructor(readonly store: Store, readonly config: AppConfig, readonly milky: MilkyClient) {
     const existing = store.meta('media-signing-key');
@@ -50,29 +51,15 @@ export class MediaModule {
   }
   async resourceUrl(resourceId: string, signal?: AbortSignal): Promise<string> { return z.object({ url: z.string().url() }).parse(await this.milky.call('get_resource_temp_url', { resource_id: resourceId }, signal)).url; }
 
-  async import(roleId: string, uri: string, name?: string, eventId?: string, signal?: AbortSignal): Promise<Media> {
+  async import(roleId: string, uri: string, name?: string, eventId?: string, signal?: AbortSignal, allowPrivate = false): Promise<Media> {
     this.store.role(roleId);
     if (eventId && this.store.event(eventId).roleId !== roleId) throw new Error('媒体来源属于其他角色');
     let bytes: Buffer;
     if (uri.startsWith('http://') || uri.startsWith('https://')) {
-      const response = await fetch(uri, { signal });
-      if (!response.ok || !response.body) throw new Error(`媒体下载失败：HTTP ${response.status}`);
-      const size = Number(response.headers.get('content-length') ?? 0);
-      if (size > this.config.mediaMaxBytes) throw new Error('媒体超过配置的下载容量');
-      const reader = response.body.getReader();
-      const parts: Uint8Array[] = [];
-      let length = 0;
-      try {
-        for (;;) {
-          const part = await reader.read();
-          if (part.done) break;
-          length += part.value.byteLength;
-          if (length > this.config.mediaMaxBytes) throw new Error('媒体超过配置的下载容量');
-          parts.push(part.value);
-        }
-      } finally { await reader.cancel(); reader.releaseLock(); }
-      bytes = Buffer.concat(parts);
-      name ??= basename(new URL(uri).pathname) || 'resource';
+      const response = await downloadResource(uri, { signal, maxBytes: this.config.mediaMaxBytes, allowPrivate });
+      if (!response.ok) throw new Error(`媒体下载失败：HTTP ${response.status}`);
+      bytes = response.bytes;
+      name ??= basename(new URL(response.url).pathname) || 'resource';
     } else if (uri.startsWith('base64://')) {
       const encoded = uri.slice(9);
       if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new Error('Base64 内容无效');
@@ -120,6 +107,17 @@ export class MediaModule {
     return { uri: url.href, expiresAt: new Date(expires * 1000).toISOString() };
   }
   private signature(id: string, expires: number): string { return createHmac('sha256', this.key).update(`${id}\n${expires}`).digest('hex'); }
+  isPreparedUri(roleId: string, uri: string): boolean {
+    if (uri.startsWith('base64://')) return true;
+    if (!this.config.publicUrl) return false;
+    let url: URL; try { url = new URL(uri); } catch { return false; }
+    const base = new URL('kw-media', this.config.publicUrl);
+    if (url.origin !== base.origin || url.pathname !== base.pathname) return false;
+    const id = url.searchParams.get('id') ?? '', expires = Number(url.searchParams.get('expires')), signature = url.searchParams.get('signature') ?? '';
+    if (!id || !Number.isSafeInteger(expires) || expires < Date.now() / 1000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
+    const media = this.store.get('media', id, mediaSchema);
+    return media?.roleId === roleId && timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(this.signature(id, expires), 'hex'));
+  }
   async serve(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const id = url.searchParams.get('id') ?? '';

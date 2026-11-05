@@ -5,7 +5,7 @@ import { isUtf8 } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { Store } from './store.ts';
-import { now, asJson, roleSchema, toolConversation, type Json, type Operation } from './types.ts';
+import { now, asJson, EvidenceError, PersistenceError, roleSchema, toolConversation, type Json, type Operation } from './types.ts';
 import { fitText, readable, tokens } from './budget.ts';
 
 export const payloadReadSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(4).max(65536).default(4096) }).strict();
@@ -28,11 +28,11 @@ export class Payloads {
     visit(value); return [...refs.values()];
   }
   private authorizedPath(roleId: string, id: string): string {
-    if (!/^[a-f0-9]{64}$/.test(id) || !this.store.db.prepare('SELECT 1 FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(id, roleId)) throw new Error('负载不存在或属于其他角色');
+    if (!/^[a-f0-9]{64}$/.test(id) || !this.store.db.prepare('SELECT 1 FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(id, roleId)) throw new EvidenceError('负载不存在或属于其他角色');
     return this.path(id);
   }
   private decode(id: string, bytes: Buffer): Json {
-    if (createHash('sha256').update(bytes).digest('hex') !== id) throw new Error('负载校验和不一致');
+    if (createHash('sha256').update(bytes).digest('hex') !== id) throw new PersistenceError('负载校验和不一致');
     return asJson(JSON.parse(bytes.toString('utf8')));
   }
   async value(roleId: string, id: string, signal?: AbortSignal): Promise<Json> {
@@ -83,14 +83,14 @@ export class Payloads {
   async read(roleId: string, input: z.input<typeof payloadReadSchema>, signal?: AbortSignal): Promise<Json> {
     const query = payloadReadSchema.parse(input); signal?.throwIfAborted();
     const row = this.store.db.prepare('SELECT bytes,mime FROM payloads WHERE id=? AND role_id=? LIMIT 1').get(query.id, roleId);
-    if (!row) throw new Error('负载不存在或属于其他角色');
-    if (query.offset > Number(row.bytes)) throw new Error('负载读取位置超过正文');
+    if (!row) throw new EvidenceError('负载不存在或属于其他角色');
+    if (query.offset > Number(row.bytes)) throw new EvidenceError('负载读取位置超过正文');
     const file = await open(this.path(query.id), 'r');
     try {
-      if ((await file.stat()).size !== Number(row.bytes)) throw new Error('负载文件长度与登记记录不一致');
+      if ((await file.stat()).size !== Number(row.bytes)) throw new PersistenceError('负载文件长度与登记记录不一致');
       const buffer = Buffer.alloc(query.limit); const { bytesRead } = await file.read(buffer, 0, buffer.length, query.offset); signal?.throwIfAborted();
       let end = bytesRead; while (end > Math.max(0, bytesRead - 3) && !isUtf8(buffer.subarray(0, end))) end--;
-      if ((bytesRead > 0 && end === 0) || !isUtf8(buffer.subarray(0, end))) throw new Error('读取位置必须位于 UTF-8 字符边界');
+      if ((bytesRead > 0 && end === 0) || !isUtf8(buffer.subarray(0, end))) throw new EvidenceError('读取位置必须位于 UTF-8 字符边界');
       const next = query.offset + end;
       return { id: query.id, offset: query.offset, text: buffer.subarray(0, end).toString('utf8'), bytes: Number(row.bytes), nextCursor: next < Number(row.bytes) ? next : null };
     } finally { await file.close(); }

@@ -1,0 +1,6 @@
+- id: llm-pi-ai
+  config:
+    providers: !!js "({[process.env.KW_LLM_PROVIDER]: { displayName: 'KWAgent Chat', api: 'openai-completions', baseURL: process.env.KW_CHAT_BASE_URL, apiKeyEnv: 'KW_CHAT_API_KEY', defaultInput: ['text', 'image'], reasoning: 'medium', models: [{ id: process.env.KW_LLM_MODEL, name: process.env.KW_LLM_MODEL, reasoningEfforts: { off: null, low: 'low', medium: 'medium', high: 'high' }, compat: { thinkingFormat: process.env.KW_CHAT_THINKING_FORMAT } }] }, 'kw-resilience-offline': { displayName: 'KWAgent offline connection test', api: 'openai-completions', apiKeyEnv: 'KW_RESILIENCE_OFFLINE_TOKEN', baseURL: 'http://127.0.0.1:9/v1', timeoutMs: 1000, streamIdleTimeoutMs: 1000, models: [{id: 'offline-model', name: 'offline-model'}] }})"
+- insert:
+    - id: kw-resilience-observer
+      name: kwagent-resilience-observer

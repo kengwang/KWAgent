@@ -1,5 +1,5 @@
 {
-  "name": "@kwagent/kw-bundle", "version": "0.4.1", "type": "module",
+  "name": "@kwagent/kw-bundle", "version": "0.5.0", "type": "module",
   "dsh": { "bundle": { "patch": "./cordis.patch.yml", "platforms": ["linux", "win32", "darwin"] } },
   "files": ["cordis.patch.yml"], "engines": { "dsh": "0.2.2-alpha.2" },
   "dependencies": { "@kwagent/kw-mind": "workspace:*", "@kwagent/kw-life": "workspace:*", "@kwagent/kw-lagrange": "workspace:*", "@kwagent/kw-panel": "workspace:*" }

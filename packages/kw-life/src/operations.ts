@@ -13,6 +13,7 @@ import { planRequestSchema } from './plans.ts';
 import { extensionRequestSchema } from './extensions.ts';
 import { query, readActions } from './queries.ts';
 import { APP_VERSION } from '@kwagent/core';
+import { skillInstallSchema } from './skills.ts';
 
 export function adminSocket(dataRoot: string): string {
   return process.platform === 'win32' ? String.raw`\\.\pipe\kwagent-${createHash('sha256').update(resolve(dataRoot)).digest('hex').slice(0, 16)}` : join(dataRoot, 'run', 'admin.sock');
@@ -67,15 +68,17 @@ export class Operations {
       case 'memory.consolidate': {
         const input = z.object({ roleId: z.string() }).parse(value);
         const handle = await life.ensure(input.roleId);
-        await life.context.kwMind.consolidate(handle.agent, input.roleId, AbortSignal.timeout(120000));
-        return { consolidated: true, memories: life.store.memories(input.roleId).length };
+        const result = await life.context.kwMind.consolidate(handle.agent, input.roleId, AbortSignal.timeout(120000));
+        return { ...result, consolidated: result.status === 'completed', memories: life.store.memories(input.roleId).length };
       }
       case 'memory.revise': {
         const input = z.object({ memory: memoryInputSchema, expectedRevision: z.number().int().positive().nullable(), reason: z.string().min(1) }).parse(value);
         return asJson(await life.context.kwMind.revise(input.memory, input.expectedRevision, 'owner', input.reason));
       }
-      case 'plan': { const input = z.object({ roleId: z.string(), request: planRequestSchema }).parse(value); return asJson(await life.plans.mutate(input.roleId, input.request)); }
+      case 'plan': { const input = z.object({ roleId: z.string(), request: planRequestSchema }).parse(value); return asJson(await life.plans.mutate(input.roleId, input.request, { owner: true, sources: [] })); }
       case 'extension': { const input = z.object({ roleId: z.string(), request: extensionRequestSchema }).parse(value); const handle = input.request.action === 'enable' ? await life.ensure(input.roleId) : life.handles.get(input.roleId); return asJson(await life.extensions.manage(input.roleId, input.request, handle?.agent.ctx)); }
+      case 'skill.install': { const input = z.object({ roleId: z.string(), ...skillInstallSchema.shape }).strict().parse(value); const { roleId, ...request } = input; return asJson(await life.roleSkills.install(roleId, request)); }
+      case 'skill.list': { const input = z.object({ roleId: z.string() }).strict().parse(value); return asJson(life.roleSkills.list(input.roleId)); }
       case 'quiesce': await life.quiesce(); return { maintenance: true };
       case 'resume': await life.resume(); return { maintenance: false };
       case 'shutdown': await life.quiesce(); setTimeout(() => life.context.appExit?.(0), 100); return { shutdown: true };
@@ -126,7 +129,7 @@ export class Operations {
     });
     await new Promise<void>((resolve, reject) => { this.server!.once('error', reject); this.server!.listen(socket, resolve); });
     if (process.platform !== 'win32') await chmod(socket, 0o600);
-    this.timer = setInterval(() => { if (!this.life.started && !this.life.maintenance) this.life.track(this.life.start()); this.life.track(this.checkBackup()); for (const role of this.life.store.roles()) if (role.state === 'active') this.life.enqueue(role.id); }, 60000);
+    this.timer = setInterval(() => { if (!this.life.started && !this.life.maintenance) this.life.track(this.life.start()); this.life.track(this.checkBackup()); for (const role of this.life.store.roles()) if (role.state === 'active') { this.life.enqueue(role.id); this.life.track(this.life.retryDeferredMemory(role.id), role.id); } }, 60000);
     this.timer.unref();
   }
   private async checkBackup(): Promise<void> {

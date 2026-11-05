@@ -58,10 +58,11 @@ try {
   const database = new Store(join(root, 'kwagent/state.sqlite')); const pendingId = database.meta(`lifecycle:${id}`); assert.ok(pendingId); const pending = database.get('operation', pendingId, operationSchema); const target = pending.arguments.to; assert.equal(database.role(id).sessionId, target); database.close();
   await start(); await until(() => admin('record.read', { roleId: id, kind: 'operation', id: pendingId }).state === 'succeeded', '恢复中断的管理操作');
   assert.equal(role().sessionId, target); assert.equal(role().state, 'paused');
-  await observer(); admin('role.control', { id, state: 'active' });
+  await observer(); admin('event', { roleId: id, text: '本机管理验收：使用run_code调用tools.verification_mark({text:"继续内部会话验收"})，保存后结束。' }); admin('role.control', { id, state: 'active' });
   await until(() => marked(target), '旧会话的真实模型步骤');
   state = await fixture(); const oldTask = state.schedules.find(task => task.sessionId === target && task.status === 'active'); assert.ok(oldTask);
   await fixture('archive'); await until(() => completedReset(target), '运行中归档后换会话'); const continued = role().sessionId;
+  admin('event', { roleId: id, text: '本机管理验收：使用run_code调用tools.verification_mark({text:"新会话已经继续"})，保存后结束。' });
   await until(() => marked(continued), '新会话继续真实模型步骤');
   state = await fixture(); assert.ok(state.schedules.some(task => task.sessionId === continued && task.status === 'active')); assert.equal(state.schedules.some(task => task.sessionId === target && task.status === 'active'), false);
   admin('role.control', { id, state: 'paused' });

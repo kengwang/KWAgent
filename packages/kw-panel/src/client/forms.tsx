@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { Json, LifePlan, Role } from '@kwagent/core';
 type Call = (action: string, payload?: unknown) => Promise<unknown>;
@@ -11,6 +11,8 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
   const [persona, setPersona] = useState(initial?.persona ?? '');
   const [selfState, setSelfState] = useState(initial?.selfState ?? '');
   const [examples, setExamples] = useState(initial?.expressionExamples.join('\n\n') ?? '');
+  const [preinjectSkills, setPreinjectSkills] = useState(initial?.preinjectSkills.join('\n') ?? '');
+  const [adminQQs, setAdminQQs] = useState(initial?.adminQQs.join('\n') ?? '');
   const [provider, setProvider] = useState(initial?.provider ?? config.provider);
   const [model, setModel] = useState(initial?.model ?? config.model ?? '');
   const [world, setWorld] = useState(initial?.worldMode ?? 'real');
@@ -25,8 +27,8 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
   const [budget, setBudget] = useState(initial?.memoryTokens ?? 8192);
   return <form className="kw-form" onSubmit={event => {
     event.preventDefault();
-    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), provider, model, worldMode: world,
-      groups: numbers(groups), contacts: numbers(contacts), globalGroups: global, defaultPrivate: privateRole,
+    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), preinjectSkills: preinjectSkills.split(/[,，\s]+/).filter(Boolean), provider, model, worldMode: world,
+      groups: numbers(groups), contacts: numbers(contacts), adminQQs: numbers(adminQQs), globalGroups: global, defaultPrivate: privateRole,
       memoryTokens: budget, dailyRequests: requests ? Number(requests) : null, dailyTokens: tokens ? Number(tokens) : null,
       activeHours: start || end ? { start, end } : null }).catch(() => {});
   }}>
@@ -36,11 +38,15 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
     <label>人格<textarea required rows={9} value={persona} onChange={event => setPersona(event.target.value)} /></label>
     <label>自我状态<textarea value={selfState} onChange={event => setSelfState(event.target.value)} /></label>
     <label>表达示例<textarea rows={5} value={examples} onChange={event => setExamples(event.target.value)} placeholder="示例之间留空行，仅作为风格上下文。" /></label>
+    <label>预注入 Skill 列表<textarea rows={4} value={preinjectSkills} onChange={event => setPreinjectSkills(event.target.value)} placeholder="每行填写一个已安装的 Skill 名称，例如 kwagent-life 或 lagrange。" /></label>
+    <p>每个模型步骤自动读取并注入所选 Skill 正文；修改从下一步骤生效。引用资料仍按需读取，缺失或不可读取的 Skill 会明确报错。</p>
     <label>模型提供者<input required value={provider} onChange={event => setProvider(event.target.value)} /></label>
     <label>模型<input required value={model} onChange={event => setModel(event.target.value)} /></label>
     <label>世界模式<select value={world} onChange={event => setWorld(event.target.value as Role['worldMode'])}><option value="real">现实生活</option><option value="fictional">共同虚构世界</option><option value="mixed">现实与虚构并存</option></select></label>
     <label>绑定群聊<input value={groups} onChange={event => setGroups(event.target.value)} placeholder="使用逗号分隔真实群号" /></label>
     <label>绑定联系人<input value={contacts} onChange={event => setContacts(event.target.value)} /></label>
+    <label>角色管理员 QQ<textarea rows={3} value={adminQQs} onChange={event => setAdminQQs(event.target.value)} placeholder="使用换行或逗号分隔。群主和群管理员不会自动获得角色管理权限。" /></label>
+    <p>只有列表中的真实发送账号及 Panel 管理输入可以授权危险操作；昵称、群权限和转发中声明的身份不授予权限。</p>
     <label className="kw-check"><input type="checkbox" checked={global} onChange={event => setGlobal(event.target.checked)} />接收账号全部未绑定群聊</label>
     <label className="kw-check"><input type="checkbox" checked={privateRole} onChange={event => setPrivateRole(event.target.checked)} />作为账号默认私聊角色</label>
     <label>记忆上下文预算<input type="number" min="256" max="131072" required value={budget} onChange={event => setBudget(Number(event.target.value))} /></label>
@@ -50,6 +56,23 @@ export function RoleForm({ initial, config, busy, onCancel, onSave }: { initial?
     <label>活动结束时间<input type="time" value={end} onChange={event => setEnd(event.target.value)} /></label>
     <div className="kw-actions"><Button type="submit" variant="primary" disabled={busy}>保存角色</Button><Button onClick={onCancel}>取消</Button></div>
   </form>;
+}
+
+export function RoleSkillForm({ roleId, call, revision }: { roleId: string; call: Call; revision: number }) {
+  const [repository, setRepository] = useState(''); const [path, setPath] = useState('.'); const [ref, setRef] = useState('');
+  const [items, setItems] = useState<{ name: string; repository: string; path: string; commit: string }[]>([]);
+  const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false);
+  useEffect(() => { let live = true; void call('skill.list', { roleId }).then(value => { if (live) setItems(value as typeof items); }).catch(() => {}); return () => { live = false; }; }, [roleId, revision]);
+  return <section><h3>角色 Skill</h3><p>导入后，在“编辑角色”的预注入列表中填写 Skill 名称。正文按角色加载，参考资料按需读取。</p>
+    {items.map(item => <article className="kw-entry" key={item.name}><strong>{item.name}</strong><p>{item.repository} · {item.path}</p><p>安装版本：{item.commit}</p></article>)}
+    <form className="kw-form" onSubmit={event => { event.preventDefault(); setBusy(true); setNotice(''); void call('skill.install', { roleId, repository, path, ...ref ? { ref } : {} }).then(value => { const item = value as typeof items[number]; setItems(previous => [...previous.filter(old => old.name !== item.name), item]); setNotice(`已导入 ${item.name}，可将名称加入该角色的预注入列表。`); }).catch(() => {}).finally(() => setBusy(false)); }}>
+      <label>GitHub Skill 仓库<input type="url" required value={repository} onChange={event => setRepository(event.target.value)} placeholder="https://github.com/Aboudjem/humanizer-skill" /></label>
+      <label>Skill 子目录<input required value={path} onChange={event => setPath(event.target.value)} placeholder="例如 skills/humanizer；根目录填写 ." /></label>
+      <label>分支或标签<input value={ref} onChange={event => setRef(event.target.value)} placeholder="留空使用仓库默认分支" /></label>
+      <Button type="submit" disabled={busy}>{busy ? '正在导入…' : '导入角色 Skill'}</Button>
+      {notice && <p role="status">{notice}</p>}
+    </form>
+  </section>;
 }
 
 export function PlanForm({ roleId, call, initial, onDone }: { roleId: string; call: Call; initial?: LifePlan; onDone(): void }) {

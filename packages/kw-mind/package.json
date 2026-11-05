@@ -1,10 +1,23 @@
 {
-  "name": "@kwagent/kw-mind", "version": "0.4.1", "type": "module",
+  "name": "@kwagent/kw-mind",
+  "version": "0.5.0",
+  "type": "module",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./compaction": { "types": "./lib/types/compaction.d.ts", "default": "./lib/compaction.js" }
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./compaction": {
+      "types": "./lib/types/compaction.d.ts",
+      "default": "./lib/compaction.js"
+    }
   },
   "files": ["lib"],
-  "engines": { "dsh": "0.2.2-alpha.2" },
-  "dependencies": { "@kwagent/core": "workspace:*" }
+  "engines": {
+    "dsh": "0.2.2-alpha.2"
+  },
+  "dependencies": {
+    "@kwagent/core": "workspace:*",
+    "jsonrepair": "3.15.0"
+  }
 }

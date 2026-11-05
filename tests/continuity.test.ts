@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
-import { Store, Payloads, loadConfig, roleInputSchema, continuityDataSchema, continuityActive, ConflictError, tokens, type ContinuityScene, type ContinuityRequest } from '@kwagent/core';
+import { Store, Payloads, loadConfig, roleInputSchema, continuityDataSchema, continuityActive, ConflictError, EvidenceError, tokens, type ContinuityScene, type ContinuityRequest } from '@kwagent/core';
 import { Continuity } from '../packages/kw-mind/src/continuity.ts';
 
 function environment() {
@@ -16,6 +16,16 @@ function environment() {
   const base = { title: '面试后续', content: '等待合适时机了解后续。', sources: [event.id], people: ['10001'], context: { scene: 'private', peerId: 10001 } };
   return { root, store, module, event, request, base };
 }
+test('整理输出中的无效来源作为可修正的依据错误，验证全部来源后才保存', () => {
+  const { store, module, event } = environment();
+  try {
+    const input = { roleId: 'alice', kind: 'episode' as const, title: '来源核验', content: '读取真实输入', realm: 'real' as const, epistemic: 'observed' as const, people: [], aliases: [], sources: [event.id, randomUUID()], archived: false, attention: 0.5 };
+    assert.throws(() => module.assertMemory(input), EvidenceError);
+    assert.throws(() => store.saveMemory(input, null, 'alice', '核验来源'), EvidenceError);
+    assert.equal(store.memories('alice').length, 0);
+    assert.equal(store.history('role', 'alice').length, 1);
+  } finally { store.close(); }
+});
 test('连续性修订保留来源、严格角色归属和CAS，结束话头后需要新依据重新开启', () => {
   const { store, module, base, request } = environment();
   try {

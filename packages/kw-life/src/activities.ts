@@ -9,18 +9,38 @@ function stable(value: Json): Json { return Array.isArray(value) ? value.map(sta
 
 export class Activities {
   readonly accepted = new Map<string, Set<string>>();
+  private readonly awaiting = new Map<string, Set<string>>();
   private readonly repeated = new Map<string, { signature: string; result: string; count: number; warned: boolean }>();
   private readonly nestedRoots = new Set<string>();
+  private readonly responded = new Map<string, string>();
   constructor(readonly store: Store) {}
   release(roleId: string): void {
     const activity = this.current(roleId); if (activity?.state === 'running') this.save({ ...activity, state: 'interrupted', endedAt: now() });
-    this.store.setMeta(`activity:${roleId}`, ''); this.accepted.delete(roleId);
+    this.store.setMeta(`activity:${roleId}`, ''); this.accepted.delete(roleId); this.awaiting.delete(roleId);
+    this.responded.delete(roleId);
     for (const key of this.repeated.keys()) if (key.startsWith(`${roleId}:`)) this.repeated.delete(key);
     for (const key of this.nestedRoots) if (key.startsWith(`${roleId}:`)) this.nestedRoots.delete(key);
   }
   current(roleId: string): Activity | undefined { const id = this.store.meta(`activity:${roleId}`); return id ? this.store.get('activity', id, activitySchema) : undefined; }
+  restore(roleId: string, events: readonly SessionEvent[]): void {
+    const accepted = new Set<string>(); let responded: string | undefined; let completed = 0;
+    for (const event of events) {
+      if (event.type === 'user/message') accepted.add(event.data.id);
+      else if (event.type === 'assistant/message' && !event.data.interrupted) responded = `${event.data.turn}:${event.data.step}`;
+      else if (event.type === 'step/end' && responded === `${event.data.turn}:${event.data.step}`) { completed = accepted.size; responded = undefined; }
+    }
+    this.accepted.set(roleId, accepted);
+    if (completed) this.store.completeDelivered(roleId, [...accepted].slice(0, completed));
+    this.awaiting.set(roleId, new Set([...accepted].slice(completed)));
+  }
+  complete(roleId: string): void {
+    const awaiting = this.awaiting.get(roleId); if (!awaiting?.size) return;
+    this.store.completeDelivered(roleId, [...awaiting]); awaiting.clear();
+  }
   private save(value: Activity): void { this.store.put('activity', value.id, value.roleId, asJson({ ...value, revision: value.revision + 1 }), value.revision, 'system', '活动状态变化'); }
   event(roleId: string, sessionId: string, event: SessionEvent): void {
+    if (event.type === 'assistant/message' && !event.data.interrupted) this.responded.set(roleId, `${event.data.turn}:${event.data.step}`);
+    if (event.type === 'step/end' && this.responded.get(roleId) === `${event.data.turn}:${event.data.step}`) { this.complete(roleId); this.responded.delete(roleId); }
     if (event.type === 'turn/start') {
       const id = `activity-${createHash('sha256').update(`${sessionId}:${event.seq}`).digest('hex')}`;
       const value: Activity = { id, roleId, sessionId, turn: event.data.turn, startSeq: event.seq, startedAt: new Date(event.time).toISOString(), endedAt: null, state: 'running', accepted: 0, steps: 0, sends: { succeeded: 0, failed: 0, unknown: 0 }, revision: 1 };
@@ -30,6 +50,8 @@ export class Activities {
     const activity = this.current(roleId);
     if (event.type === 'user/message') {
       const accepted = this.accepted.get(roleId) ?? new Set<string>(); accepted.add(event.data.id); this.accepted.set(roleId, accepted);
+      const awaiting = this.awaiting.get(roleId) ?? new Set<string>(); awaiting.add(event.data.id); this.awaiting.set(roleId, awaiting);
+      if (String(event.data.source.kind) === 'runtime-context') return;
       if (!activity) return;
       this.store.link(activity.id, 'input', event.data.id, { seq: event.seq, source: asJson(event.data.source), state: 'accepted', time: event.time });
       if (event.data.source.kind === 'kw-event') {

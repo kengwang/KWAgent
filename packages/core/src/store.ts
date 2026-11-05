@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
 import {
-  asJson, ConflictError, eventSchema, extensionSchema, memorySchema, now,
+  asJson, ConflictError, EvidenceError, PersistenceError, eventSchema, extensionSchema, memorySchema, now,
   operationSchema, planSchema, roleInputSchema, roleSchema, mediaSchema,
 } from './types.ts';
 import type { EventInput, Experience, Extension, Json, LifePlan, Media, Memory, MemoryInput, Operation, Recall, Revision, Role, RoleInput } from './types.ts';
@@ -14,7 +14,8 @@ export const SCHEMA_VERSION = 4;
 type Row = Record<string, unknown>;
 function decode<T>(row: Row | undefined, schema: z.ZodType<T>): T | undefined {
   if (!row) return undefined;
-  return schema.parse(JSON.parse(z.string().parse(row.body)));
+  try { return schema.parse(JSON.parse(z.string().parse(row.body))); }
+  catch (cause) { if (cause instanceof z.ZodError || cause instanceof SyntaxError) throw new PersistenceError('持久记录格式损坏或不兼容', { cause }); throw cause; }
 }
 
 /** 同一数据库拥有原始经历、版本和记忆，变更通知只在提交后发送。 */
@@ -121,7 +122,7 @@ export class Store {
     const rows = roleId === undefined
       ? this.db.prepare(`SELECT body FROM documents WHERE kind=?${live} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`).all(kind, limit, offset)
       : this.db.prepare(`SELECT body FROM documents WHERE kind=? AND role_id=?${live} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?`).all(kind, roleId, limit, offset);
-    return rows.map(row => schema.parse(JSON.parse(z.string().parse(row.body))));
+    return rows.map(row => decode(row, schema)!);
   }
   put(kind: string, id: string, roleId: string | null, value: Json, expectedRevision: number | null, actor: string, reason: string): void {
     this.transaction(() => {
@@ -239,7 +240,7 @@ export class Store {
   peers(accountId: string, scene: string): number[] {
     return this.db.prepare("SELECT DISTINCT peer_id FROM events WHERE account_id=? AND scene=? AND source='milky' AND role_id IS NOT NULL AND peer_id IS NOT NULL").all(accountId, scene).map(row => Number(row.peer_id));
   }
-  event(id: string): Experience { const row = this.db.prepare('SELECT * FROM events WHERE id=?').get(id); if (!row) throw new Error(`经历不存在：${id}`); return this.eventFromRow(row); }
+  event(id: string): Experience { const row = this.db.prepare('SELECT * FROM events WHERE id=?').get(id); if (!row) throw new EvidenceError(`经历不存在：${id}`); return this.eventFromRow(row); }
   pending(roleId: string, limit = 50): Experience[] {
     return this.db.prepare("SELECT e.* FROM events e LEFT JOIN event_delivery d ON d.event_id=e.id WHERE e.role_id=? AND e.self=0 AND (d.state IS NULL OR d.state='prepared') ORDER BY e.seq LIMIT ?").all(roleId, limit).map(row => this.eventFromRow(row));
   }
@@ -251,7 +252,7 @@ export class Store {
     return { events: pending.filter(event => delivery(event.id) === messageId), ...(messageId ? { messageId: String(messageId) } : {}) };
   }
   delivery(ids: string[], messageId: string, state: 'prepared' | 'delivered' | 'completed'): void {
-    this.transaction(() => { for (const id of ids) this.db.prepare('INSERT INTO event_delivery VALUES(?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET message_id=excluded.message_id,state=excluded.state,updated_at=excluded.updated_at').run(id, messageId, state, now()); this.touch(); });
+    this.transaction(() => { for (const id of ids) this.db.prepare("INSERT INTO event_delivery VALUES(?,?,?,?) ON CONFLICT(event_id) DO UPDATE SET message_id=excluded.message_id,state=excluded.state,updated_at=excluded.updated_at WHERE event_delivery.state!='completed' AND NOT(event_delivery.state='delivered' AND excluded.state='prepared')").run(id, messageId, state, now()); this.touch(); });
   }
   hasDelivery(messageId: string): boolean { return Boolean(this.db.prepare("SELECT 1 FROM event_delivery WHERE message_id=? AND state!='prepared' LIMIT 1").get(messageId)); }
   deliveryStatus(id: string): { messageId: string | null; state: string } {
@@ -259,7 +260,7 @@ export class Store {
     if (!row) throw new Error('经历不存在');
     return { messageId: row.message_id ? String(row.message_id) : null, state: row.state === 'completed' ? 'completed' : row.activity_id ? 'accepted' : row.state === 'delivered' ? 'queued' : row.state === 'prepared' ? 'prepared' : row.self ? 'observed' : 'pending' };
   }
-  completeDelivered(roleId: string, accepted: string[]): void { this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted)); this.touch(); }
+  completeDelivered(roleId: string, accepted: string[]): void { if (this.db.prepare("UPDATE event_delivery SET state='completed',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state IN ('prepared','delivered') AND message_id IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted)).changes) this.touch(); }
   recoverDeliveries(roleId: string, accepted: string[]): void {
     this.db.prepare("UPDATE event_delivery SET state='prepared',updated_at=? WHERE event_id IN (SELECT id FROM events WHERE role_id=?) AND state='delivered' AND message_id NOT LIKE 'filtered:%' AND message_id NOT IN (SELECT value FROM json_each(?))").run(now(), roleId, JSON.stringify(accepted));
     this.touch();
@@ -291,15 +292,15 @@ export class Store {
     this.touch();
   }
 
-  memory(id: string): Memory { const memory = this.get('memory', id, memorySchema); if (!memory) throw new Error(`记忆不存在：${id}`); return memory; }
+  memory(id: string): Memory { const memory = this.get('memory', id, memorySchema); if (!memory) throw new EvidenceError(`记忆不存在：${id}`); return memory; }
   memories(roleId: string, limit = 100, offset = 0): Memory[] { return this.list('memory', memorySchema, roleId, limit, offset); }
   saveMemory(input: MemoryInput, expectedRevision: number | null, actor: string, reason: string): Memory {
     return this.transaction(() => {
       this.role(input.roleId);
       const id = input.id ?? randomUUID();
       const previous = this.get('memory', id, memorySchema);
-      if (previous && previous.roleId !== input.roleId) throw new Error('记忆归属不能通过修订修改');
-      if (input.people.some(identity => !/^[1-9][0-9]*$/.test(identity) && !previous?.people.includes(identity))) throw new Error('人物必须使用实际账号标识，昵称请保存到 aliases');
+      if (previous && previous.roleId !== input.roleId) throw new EvidenceError('记忆归属不能通过修订修改');
+      if (input.people.some(identity => !/^[1-9][0-9]*$/.test(identity) && !previous?.people.includes(identity))) throw new EvidenceError('人物必须使用实际账号标识，昵称请保存到 aliases');
       this.validateSources(input.roleId, input.sources);
       const memory = memorySchema.parse({ ...input, id, revision: expectedRevision === null ? 1 : expectedRevision + 1, createdAt: previous?.createdAt ?? now(), updatedAt: now() });
       this.put('memory', id, input.roleId, asJson(memory), expectedRevision, actor, reason);
@@ -350,12 +351,12 @@ export class Store {
   }
   plans(roleId?: string): LifePlan[] { return this.list('plan', planSchema, roleId, 10000); }
   validateSources(roleId: string, sources: string[], allowPersona = true): void {
-    if (!sources.length) throw new Error('必须提供真实来源');
+    if (!sources.length) throw new EvidenceError('必须提供真实来源');
     for (const source of sources) {
       if (allowPersona && source === `role:${roleId}`) continue;
       const event = this.db.prepare('SELECT role_id FROM events WHERE id=?').get(source);
       const operation = this.get('operation', source, operationSchema);
-      if (event?.role_id !== roleId && operation?.roleId !== roleId) throw new Error(`来源不存在或不属于当前角色：${source}`);
+      if (event?.role_id !== roleId && operation?.roleId !== roleId) throw new EvidenceError(`来源不存在或不属于当前角色：${source}；请使用输入中真实存在且属于当前角色的来源标识`);
     }
   }
   frame(messageId: string): Json | undefined { const row = this.db.prepare('SELECT body FROM perception_frames WHERE message_id=?').get(messageId); return row ? asJson(JSON.parse(String(row.body))) : undefined; }
@@ -380,7 +381,7 @@ export class Store {
       if (remaining === 0) this.markConsolidated([eventId]); this.touch();
     });
   }
-  plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new Error('计划不存在'); return plan; }
+  plan(id: string): LifePlan { const plan = this.get('plan', id, planSchema); if (!plan) throw new EvidenceError('计划不存在'); return plan; }
   savePlan(plan: LifePlan, expected: number | null, actor: string): void { this.put('plan', plan.id, plan.roleId, asJson(planSchema.parse(plan)), expected, actor, '修改目标或安排'); }
   operations(roleId?: string, limit = 100): Operation[] { return this.list('operation', operationSchema, roleId, limit); }
   startOperation(accountId: string, roleId: string | null, tool: string, args: Json, correlation?: { callId?: string; rootCallId?: string; executionId?: string; context?: Operation['context'] }): Operation {

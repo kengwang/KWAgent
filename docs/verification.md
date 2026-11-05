@@ -1,5 +1,17 @@
 # 验收记录
 
+## v0.5.0
+
+2026 年 11 月 5 日，本地构建、严格类型检查、55 项测试、Git 忽略和凭据检查通过。新增检查覆盖已处理投递的单调状态、待处理消息背景隔离、完整步骤确认与中断保留、真实 SkillRegistry、修复 JSON 与严格来源校验、实际 SQLite usage 写入故障及损坏持久行分类。
+
+`node scripts/verify-resilience.mjs` 使用隔离 Harness、实际模型和 GitHub 仓库导入 humanizer。16 条连续输入全部处理，查询扩展共 4 次；重复投递没有新增前台请求，重启没有重投。实际不可连接的辅助接口返回延后状态，原始经历保留，正常聊天模型继续完成前台输入。实际 Native/PTC 写文件、未授权拒绝和嵌套撤权检查通过。报告为 `.artifacts/verification/resilience.json`。
+
+`node scripts/verify-resilience-boundaries.mjs` 通过真实 Milky 事件 Module 投递隔离资料，管理员与普通输入分别进入真实模型请求，未接纳的普通输入没有进入管理员请求。16 条普通消息合并为一次前台请求，全部完成。实际检查计划与 QQ 撤权、工具依据纠正、辅助请求中 SQLite usage 硬故障；数据库失败保持致命状态并保留原始资料。报告为 `.artifacts/verification/resilience-boundaries.json`。
+
+真实浏览器完成角色创建、预注入 Skill 与管理员 QQ 保存及回读、GitHub Skill 导入与实际提交显示，检查 1366×900 和 420×900 页面。截图位于 `output/playwright/v050-*.png`。`verify-lifecycle.mjs` 再次通过归档恢复、真实进程中断、计划迁移、删除及完整历史读取。所有角色均无正式会话绑定，模型验收由工具守卫禁止 QQ 和空间调用。
+
+网络测试使用实际 HTTP 服务与 CONNECT 代理，确认连接固定解析 IP、原域名 Host 保留及内网访问校验。公网脚本通过用户代理读取同一固定提交的实际 Skill 文件。Linux 镜像、旧版本升级及完整备份恢复由发布工作流的断网检查执行；结果对应实际标签工作流。
+
 ## v0.4.1
 
 隔离 Host 将 Milky 地址配置为不可用的本机端口，实际验证未启用、暂停、停止三种角色的重置、空白 Session 持久化、Session 查询与删除。全部保留原有状态，没有模型或社交调用。报告位于 `.artifacts/verification/offline-lifecycle.log`。
