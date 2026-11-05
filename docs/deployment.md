@@ -21,7 +21,7 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 ```dotenv
 COMPOSE_PROJECT_NAME=kwagent
 COMPOSE_FILE=compose.yml:compose.kwagent.yaml
-KW_IMAGE=ghcr.io/kengwang/kwagent:0.5.2
+KW_IMAGE=ghcr.io/kengwang/kwagent:0.5.3
 KW_DATA_ROOT=./data/agent
 KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
 ```
@@ -38,7 +38,7 @@ docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 
 反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
 
-需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.1ms.run/kengwang/kwagent:0.5.2` 或对应的 `ghcr.nju.edu.cn` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
+需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.5.3` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
 
 `.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
 

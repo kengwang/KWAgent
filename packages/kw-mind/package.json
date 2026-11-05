@@ -1,6 +1,6 @@
 {
   "name": "@kwagent/kw-mind",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "type": "module",
   "exports": {
     ".": {
