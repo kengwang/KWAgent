@@ -110,10 +110,11 @@ export class Mind extends Service {
 
   async revise(input: MemoryInput, expected: number | null, actor: string, reason: string, signal?: AbortSignal): Promise<Memory> {
     const parsed = memoryInputSchema.parse(input);
-    this.continuity.assertMemory(parsed);
-    signal?.throwIfAborted();
-    try { return this.store.saveMemory(parsed, expected, actor, reason); }
-    catch (error) { if (!(error instanceof ConflictError) && !(error instanceof EvidenceError)) this.ctx.emit('kw-mind/error', parsed.roleId, error); throw error; }
+    return this.stateAction(parsed.roleId, () => {
+      this.continuity.assertMemory(parsed);
+      signal?.throwIfAborted();
+      return this.store.saveMemory(parsed, expected, actor, reason);
+    });
   }
 
   async context(roleId: string, query: string, signal?: AbortSignal): Promise<string> {
@@ -275,12 +276,12 @@ export class Mind extends Service {
   }
 
   attach(ctx: Context, roleId: string): void {
-    registerTool(ctx, 'continuity_read', '查询连续性：生活、关系、话头、会话判断、表达、反思和日记。id读取完整记录，history读取修订，使用nextCursor继续读取。', continuityQuerySchema, async input => {
-      if (!input.id) return this.stateAction(roleId, () => this.continuity.list(roleId, input));
-      const record = await this.stateAction(roleId, () => this.continuity.read(roleId, input.id!)); if (!input.history) return record;
+    registerTool(ctx, 'continuity_read', '查询连续性：生活、关系、话头、会话判断、表达、反思和日记。id读取完整记录，history读取修订，使用nextCursor继续读取。', continuityQuerySchema, input => this.stateAction(roleId, () => {
+      if (!input.id) return this.continuity.list(roleId, input);
+      const record = this.continuity.read(roleId, input.id); if (!input.history) return record;
       const rows = this.store.history('continuity', input.id, input.limit + 1, input.cursor || undefined);
       return { items: rows.slice(0, input.limit), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.revision : null };
-    });
+    }));
     registerTool(ctx, 'continuity_revise', '创建或修订连续性完整资料。创建expectedRevision=null，修改需要当前revision。生活固定id=life:角色标识。thread可结束或重新开启，expression采用时status=adopted。来源与实际发送分开；followups只引用真实消息操作。reviewAt安排复核，不直接发送。', continuityRequestSchema, async (input, exec) => { exec.signal.throwIfAborted(); return this.stateAction(roleId, () => this.continuity.revise(roleId, input)); });
     ctx.systemPrompt.section({ name: 'deployment:continuity', order: 10210, interpolate: false, text: continuityGuidance });
     registerTool(ctx, 'payload_read', '按字节游标分页读取当前角色的完整负载，nextCursor 为 null 表示结束。', payloadReadSchema, (input, exec) => this.stateAction(roleId, () => this.payloads.read(roleId, input, exec.signal)));

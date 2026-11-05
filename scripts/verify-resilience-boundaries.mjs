@@ -62,6 +62,7 @@ try {
   admin('extension', { roleId: id, request: { action: 'enable', id: 'boundary-inspector' } });
   await stop(); await start();
   const toolChecks = await fixture('tools');
+  const memoryValidation = await fixture('memory-validation-failure', { expectFatal: true });
   const storageChecks = await fixture('usage-failure');
   admin('role.control', { id, state: 'active' });
   await until(async () => { const state = await fixture(); if (state.runtime?.error) throw new Error(state.runtime.error); return state.answers.length && state.agentStatus === 'idle' ? state : undefined; }, '初始化真实回复');
@@ -81,7 +82,7 @@ try {
   assert.ok(floodRequests > 0 && floodRequests < flood.ids.length);
   assert.ok(afterFlood.captured.every(item => !(item.adminInputs && item.ordinaryInputs) && (!item.trusted || !item.pendingVisible)));
   admin('role.control', { id, state: 'paused' });
-  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, storageChecks, mixedRequestsIsolated: true, ordinaryPendingNotVisibleToTrustedRequests: true, ordinaryNativeSchemas: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, noSocialSends: true, root };
+  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, memoryValidation, storageChecks, mixedRequestsIsolated: true, ordinaryPendingNotVisibleToTrustedRequests: true, ordinaryNativeSchemas: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, noSocialSends: true, root };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/resilience-boundaries.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

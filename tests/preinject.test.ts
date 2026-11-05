@@ -28,7 +28,7 @@ test('真实 Harness Skill 注册表按角色作用域解析正文，修改和�
     const body = await readFile('packages/kw-life/skills/kwagent-life/SKILL.md', 'utf8');
     const shared = { name: 'writing-style', description: '真实文件作为加载资料', source: 'runtime' as const, content: body };
     base.skills.register(shared);
-    const scopedBody = await readFile('docs/continuity.md', 'utf8'); first.ctx.skills.register({ ...shared, content: scopedBody });
+    const scopedBody = await readFile('packages/kw-lagrange/skills/lagrange/SKILL.md', 'utf8'); first.ctx.skills.register({ ...shared, content: scopedBody });
     const input = { accountId: 'main', initialPersona: '独立角色', provider: 'chat', model: 'configured', preinjectSkills: ['writing-style'] };
     store.createRole(roleInputSchema.parse({ ...input, id: 'first', name: '第一位' })); store.createRole(roleInputSchema.parse({ ...input, id: 'second', name: '第二位' }));
     const selected = await readPreinjectSkills(store, 'first', first.ctx.skills, { scope: firstKey });

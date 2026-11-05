@@ -101,6 +101,29 @@ export async function apply(ctx) {
           return send({ actualUsageSqliteFailure: true, hardFailurePreserved: true, rawRetained: true });
         } finally { life.store.db.exec('DROP TRIGGER boundary_usage_failure'); }
       }
+      if (body.action === 'memory-validation-failure') {
+        const agent = (await life.ensure(probeId)).agent;
+        const role = life.store.role(probeId);
+        life.store.updateRole(probeId, { state: 'active' }, role.revision, 'owner', '隔离持久行校验故障');
+        const path = join(directory, 'validation-source.txt');
+        const source = life.store.startOperation('main', probeId, 'verification_observation', { path });
+        await writeFile(path, '实际持久来源读取');
+        const content = await readFile(path, 'utf8');
+        life.store.finishOperation(source.id, 'succeeded', { path, content, bytes: Buffer.byteLength(content) });
+        const saved = life.store.db.prepare("SELECT body FROM documents WHERE kind='operation' AND id=?").get(source.id).body;
+        life.store.db.prepare("UPDATE documents SET body=json_set(body,'$.state','CORRUPTED_STATE') WHERE kind='operation' AND id=?").run(source.id);
+        const faults = [];
+        const dispose = ctx.on('kw-mind/error', (roleId, error) => { if (roleId === probeId) faults.push({ name: error.name, message: error.message }); });
+        try {
+          const result = await ctx.tools.execute({ agent, signal: AbortSignal.timeout(30000), calls: [{ type: 'tool-call', id: `boundary-corrupt-${randomUUID()}`, name: 'memory_revise', arguments: JSON.stringify({ memory: { kind: 'episode', title: 'BOUNDARY-corrupt-operation', content: '实际持久来源故障', realm: 'real', epistemic: 'observed', people: [], aliases: [], sources: [source.id], archived: false, attention: 0.5 }, expectedRevision: null, reason: '真实损坏来源读取' }) }] });
+          const tool = result.results[0].result;
+          assert.equal(tool.isError, true);
+          assert.ok(JSON.stringify(tool).includes('持久记录格式损坏或不兼容'));
+          const value = { actualHarnessTool: true, actualCorruptOperationRow: true, isError: tool.isError, mindErrors: faults, runtimeState: life.runtime.get(probeId)?.state ?? null, memorySaved: life.store.memories(probeId).some(memory => memory.title === 'BOUNDARY-corrupt-operation'), noSocialSends: true };
+          if (typeof body.expectFatal === 'boolean') assert.equal(value.mindErrors.length > 0 && value.runtimeState === 'error', body.expectFatal);
+          return send(value);
+        } finally { dispose(); life.store.db.prepare("UPDATE documents SET body=? WHERE kind='operation' AND id=?").run(saved, source.id); await life.control(probeId, 'paused'); }
+      }
       response.writeHead(400); response.end('未知验收操作');
     } catch (error) { response.statusCode = 500; send({ error: error.message }); }
   } }), 'boundary-verification.route');
