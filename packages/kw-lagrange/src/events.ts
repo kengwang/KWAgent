@@ -30,8 +30,9 @@ export class MilkyEvents {
     const peerId = typeof packet.data.group_id === 'number' ? packet.data.group_id : typeof packet.data.user_id === 'number' ? packet.data.user_id : null;
     const scene = typeof packet.data.group_id === 'number' ? 'group' : 'private';
     const roleId = peerId === null ? null : this.store.route(this.client.accountId, scene, peerId);
+    const selfReaction = packet.event_type === 'group_message_reaction' && packet.data.user_id === this.client.selfId;
     const result = this.store.appendEvent({ accountId: this.client.accountId, roleId, source: 'milky', type: packet.event_type,
-      occurredAt: new Date(packet.time * 1000).toISOString(), scene, peerId, senderId: null, messageSeq: null, self: false, payload: asJson(packet.data) });
+      occurredAt: new Date(packet.time * 1000).toISOString(), scene, peerId, senderId: null, messageSeq: null, self: selfReaction, payload: asJson(packet.data) });
     if (result.inserted) this.deliver(result.event);
   }
   acceptMessage(raw: unknown): void {

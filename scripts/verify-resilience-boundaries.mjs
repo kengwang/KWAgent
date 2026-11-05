@@ -81,8 +81,14 @@ try {
   const floodRequests = afterFlood.captured.length - beforeFlood;
   assert.ok(floodRequests > 0 && floodRequests < flood.ids.length);
   assert.ok(afterFlood.captured.every(item => !(item.adminInputs && item.ordinaryInputs) && (!item.trusted || !item.pendingVisible)));
+  const reactions = await fixture('reaction-status');
+  assert.equal(reactions.length, mixed.ids.length + flood.ids.length);
+  assert.ok(reactions.every(item => item.phase === 'completed' && item.actions.clear === 'failed' && item.actions.complete === undefined), 'QQ守卫应阻断表情调用，不能写入虚假成功');
+  const beforeReplay = afterFlood.captured.length;
+  await fixture('replay', { ids: flood.ids }); await delay(1500);
+  assert.equal((await fixture()).captured.length, beforeReplay);
   admin('role.control', { id, state: 'paused' });
-  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, memoryValidation, storageChecks, mixedRequestsIsolated: true, ordinaryPendingNotVisibleToTrustedRequests: true, ordinaryNativeSchemas: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, noSocialSends: true, root };
+  const report = { actualHarness: true, actualModel: true, actualMilkyEventModule: true, sameGroupDifferentSenders: true, actualRequestIdentity: true, toolChecks, memoryValidation, storageChecks, mixedRequestsIsolated: true, ordinaryPendingNotVisibleToTrustedRequests: true, ordinaryNativeSchemas: true, ordinaryFloodInputs: flood.ids.length, ordinaryFloodRequests: floodRequests, reactionsGuarded: reactions.length, noReactionModelRequests: true, noSocialSends: true, root };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/resilience-boundaries.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

@@ -1,7 +1,8 @@
 import { Context, Service } from '@deepseek-ai/cordis';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent';
-import { MessageId, isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
+import { MessageId, ToolCallId, isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
+import { NativeToolExecutor } from '@deepseek-ai/dsh-tool-executor-native';
 import { estimateContent, estimateMessage, estimateToolsTokens, ROLE_OVERHEAD } from '@deepseek-ai/dsh-token-meter/estimate';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId, appendPluginRecord } from '@deepseek-ai/dsh-session';
@@ -14,7 +15,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, operationSchema, publicConfig, redact, tokens, summary, readable, continuityActive } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store, ContinuityScene } from '@kwagent/core';
 import { mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,7 @@ import { RoleLifecycle } from './lifecycle.ts';
 import { readPreinjectSkills } from './preinject.ts';
 import { RoleSkills } from './skills.ts';
 import { RolePolicy } from './policy.ts';
+import { MessageReactions } from './reactions.ts';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import { workspaceDomainState } from '@deepseek-ai/dsh-workspace';
 import type {} from '@deepseek-ai/dsh-storage-domain';
@@ -58,6 +60,7 @@ export class Life extends Service {
   readonly lifecycle: RoleLifecycle;
   readonly roleSkills: RoleSkills;
   readonly policy: RolePolicy;
+  readonly reactions: MessageReactions;
   readonly store: Store;
   readonly config: AppConfig;
   maintenance = false;
@@ -98,6 +101,15 @@ export class Life extends Service {
     this.lifecycle = new RoleLifecycle(this);
     this.roleSkills = new RoleSkills(ctx, this.store, this.config.dataRoot);
     this.policy = new RolePolicy(this.store, this.config.dataRoot, ctx.kwMind.steps, (roleId, uri) => ctx.kwLagrange.media.isPreparedUri(roleId, uri));
+    const progressExecutor = new NativeToolExecutor(ctx);
+    this.reactions = new MessageReactions(this.store, async (roleId, args, callId) => {
+      const agent = this.handles.get(roleId)?.agent; if (!agent) throw new Error('消息处理表情缺少角色 Agent');
+      const batch = await progressExecutor.execute({ agent, signal: AbortSignal.timeout(10000), calls: [{ type: 'tool-call', id: ToolCallId(callId), name: 'mcp__lagrange__send_group_message_reaction', arguments: JSON.stringify(args) }] });
+      const result = batch.results[0]?.result; if (!result) throw new Error('消息处理表情缺少执行结果');
+      const row = result.isError ? this.store.db.prepare("SELECT id FROM documents WHERE kind='operation' AND role_id=? AND json_extract(body,'$.callId')=? ORDER BY updated_at DESC LIMIT 1").get(roleId, callId) : undefined;
+      const operation = row ? this.store.get('operation', String(row.id), operationSchema) : undefined;
+      return { isError: result.isError, ...result.isError ? { error: result.error } : {}, ...operation?.state === 'unknown' ? { state: 'unknown' as const } : {} };
+    });
     ctx.kwLagrange.media.allowPrivateNetwork = roleId => this.policy.trusted(roleId);
     ctx.effect(() => () => { ctx.kwLagrange.media.allowPrivateNetwork = undefined; }, 'kw-life.media-permission');
   }
@@ -226,6 +238,7 @@ export class Life extends Service {
       for (const message of [...handle.agent.inbox.nextTurn, ...handle.agent.inbox.nextStep]) if (!['kw-event', 'compact-checkpoint', 'model-selection'].includes(String(message.source.kind))) this.store.appendEvent({ id: `deferred:${message.id}`, accountId: role.accountId, roleId, source: String(message.source.kind) === 'schedule' ? 'schedule' : 'system', type: 'deferred-input', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(message) });
       handle.agent.cancel({ kind: 'hook', reason: '角色会话管理' }, { keepInbox: true });
       await handle.agent.whenIdle();
+      await this.reactions.drain(roleId);
       await this.extensions.suspend(roleId);
       await this.sessions.flush(handle.agent.session);
       await handle.dispose(); this.handles.delete(roleId);
@@ -352,7 +365,12 @@ export class Life extends Service {
       agentCtx.on('session/event', (_session, event) => {
         try {
         if (event.type === 'agent/inbox/spliced') queueMicrotask(() => { if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) this.stopping.get(roleId)?.abort(); });
+        const activity = this.activities.current(roleId);
         this.activities.event(roleId, role.sessionId, event);
+        if (event.type === 'user/message' && event.data.source.kind === 'kw-event') {
+          const current = this.activities.current(roleId); if (current) this.track(this.reactions.begin(roleId, current.id, event.data.source.eventIds), roleId);
+        }
+        if (event.type === 'turn/end' && activity) this.track(this.reactions.finish(roleId, activity.id, event.data.reason.kind === 'completed' && !activity.sends.unknown && (!activity.sends.failed || activity.sends.succeeded > 0)), roleId);
         if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${role.sessionId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
         if (event.type === 'job/settled') {
           const experience = this.store.appendEvent({ id: `job:${roleId}:${event.data.jobId}:settled`, accountId: role.accountId, roleId, source: 'system', type: 'background-complete', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(event.data) });
@@ -376,6 +394,7 @@ export class Life extends Service {
     this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId)!]);
     for (const activity of this.store.list('activity', activitySchema, roleId, 200)) if (activity.state === 'running') this.store.put('activity', activity.id, roleId, asJson({ ...activity, state: 'interrupted', endedAt: now(), revision: activity.revision + 1 }), activity.revision, 'system', '恢复未完成活动');
     this.store.setMeta(`activity:${roleId}`, '');
+    this.track(this.reactions.recover(roleId), roleId);
     if (!exists) this.store.appendEvent({ id: `init:${roleId}`, accountId: role.accountId, roleId, source: 'system', type: 'initialize', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: { instruction: '认识当前环境与可用工具，自主决定自己的目标、活动和后续安排。' } });
     return handle;
   }
@@ -415,6 +434,7 @@ export class Life extends Service {
     return null;
   }
   receive(event: Experience): void {
+    this.reactions.observe(event);
     if (!event.roleId || event.self) return;
     if (['completed', 'accepted', 'queued'].includes(this.store.deliveryStatus(event.id).state)) return;
     for (const plan of this.store.plans(event.roleId)) {
@@ -516,6 +536,7 @@ export class Life extends Service {
     }
     for (const [roleId, handle] of this.handles) { if (handle.agent.status === 'running') this.store.setMeta(`wake:${roleId}`, 'pending'); handle.agent.cancel({ kind: 'hook', reason: '服务器维护' }, { keepInbox: true }); }
     await Promise.all([...this.handles.values()].map(async handle => { await handle.agent.whenIdle(); await this.sessions.flush(handle.agent.session); }));
+    await this.reactions.drain();
     await this.extensions.close();
   }
   async resume(): Promise<void> { if (this.closing) return; await this.maintenanceTask; this.maintenanceTask = undefined; this.maintenance = false; await this.repairArchivedSessions(); await this.plans.resume(); for (const role of this.store.roles()) if (role.state === 'active') { const handle = await this.ensure(role.id); await this.extensions.restore(role.id, handle.agent.ctx); this.enqueue(role.id); } }

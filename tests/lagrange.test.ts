@@ -64,6 +64,9 @@ test('真实事件接收 Module 去重、保留作者并避免自身消息触发
     assert.equal(store.events('listener')[0]?.senderId, 789);
     receiver.accept({ ...packet, data: { ...packet.data, message_seq: 8, sender_id: 456 } });
     assert.equal(store.pending('listener').length, 1);
+    receiver.accept({ event_type: 'group_message_reaction', time: 1001, self_id: 456, data: { group_id: 123, user_id: 456, message_seq: 7, face_id: '424', reaction_type: 'face', is_add: true, current_count: 1 } });
+    assert.equal(store.events('listener')[0]?.self, true);
+    assert.equal(store.pending('listener').length, 1);
     assert.throws(() => receiver.accept({ ...packet, self_id: 999 }), /账号/);
   } finally { store.close(); }
 });

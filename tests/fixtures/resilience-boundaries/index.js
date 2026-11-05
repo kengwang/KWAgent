@@ -124,6 +124,11 @@ export async function apply(ctx) {
           return send(value);
         } finally { dispose(); life.store.db.prepare("UPDATE documents SET body=? WHERE kind='operation' AND id=?").run(saved, source.id); await life.control(probeId, 'paused'); }
       }
+      if (body.action === 'reaction-status') {
+        await life.reactions.drain(id);
+        return send(life.store.db.prepare("SELECT body FROM documents WHERE kind='message-reaction' AND role_id=? ORDER BY id").all(id).map(row => JSON.parse(row.body)));
+      }
+      if (body.action === 'replay') { for (const eventId of body.ids) life.receive(life.store.event(eventId)); return send({ replayed: body.ids.length }); }
       response.writeHead(400); response.end('未知验收操作');
     } catch (error) { response.statusCode = 500; send({ error: error.message }); }
   } }), 'boundary-verification.route');
