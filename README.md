@@ -42,7 +42,7 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
-v0.5.3 修复模型提供商配置保存：`kw-chat` 使用普通可编辑 provider 对象，设置页面不再遇到 `providers.__jsExpr` 类型错误。
+v0.5.4 减少消息触发的上下文：已推送过的历史消息不再重复装入感知帧，避免每条新消息重复消耗上下文 Token。
 
 v0.5.0 增加每角色的预注入 Skill、GitHub Skill 导入和管理员 QQ 配置。真实身份在首次模型请求前准备，已处理事件持久确认，记忆后台整理与前台交流独立推进。配置及权限规则见 [角色 Skill、身份与管理员](docs/role-skills-and-authority.md)，变更见 [发布说明](docs/releases/v0.5.0.md)。
 

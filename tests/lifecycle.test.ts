@@ -67,7 +67,7 @@ test('新对话重新整理待处理感知，删除后仍可创建历史正文�
     const before = event('旧上下文内容'); store.delivery([before.id], 'completed', 'completed');
     const queued = event('尚未接纳的新输入'); store.delivery([queued.id], 'queued', 'prepared');
     const old = await preparePerception(store, payloads, role.id, [queued], 'queued', 8192);
-    assert.ok(JSON.stringify(old).includes(before.id));
+    assert.ok(!JSON.stringify(old).includes(before.id));
     const changed = store.rotateRoleSession(role.id, 'next', role.revision, [], '重置');
     const frame = await preparePerception(store, payloads, role.id, [queued], store.deliveryStatus(queued.id).messageId!, 8192);
     assert.notEqual(old.id, frame.id); assert.ok(!JSON.stringify(frame).includes(before.id));

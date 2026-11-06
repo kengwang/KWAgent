@@ -53,6 +53,8 @@ test('感知整理保留稳定账号、引用、嵌套节点及未理解媒体�
     const missing = message(3, 789, [{ type: 'reply', data: { message_seq: 999 } }, { type: 'record', data: { resource_id: 'voice' } }]);
     const privateEvent = message(4, 456, [{ type: 'text', data: { text: '私聊内容' } }], 'private', 456);
     const pending = message(5, 456, [{ type: 'text', data: { text: '尚未接纳，等待独立投递' } }]);
+    const completed = message(6, 456, [{ type: 'text', data: { text: '已经推送过的历史消息' } }]);
+    store.delivery([completed.id], 'old-batch', 'completed');
     const normalized = JSON.parse(JSON.stringify(normalizeExperience(store, second)));
     assert.equal(normalized.sender.id, 789); assert.equal(normalized.sender.aliases[0], '同名');
     assert.equal(normalized.parts[1].sourceId, first.id); assert.equal(normalized.parts[2].state, '未理解附件或消息片段'); assert.equal(normalized.parts[3].nodes[0].parts[0].state, '未读取转发内容');
@@ -61,6 +63,7 @@ test('感知整理保留稳定账号、引用、嵌套节点及未理解媒体�
     const payloads = new Payloads(store, join(root, 'artifacts'));
     const frame = await preparePerception(store, payloads, 'reader', [second, missing], 'stable-message', 8192);
     assert.ok(tokens(JSON.stringify(frame)) <= 8192); assert.ok(!JSON.stringify(frame).includes(privateEvent.id));
+    assert.deepEqual((frame.content as Json[]).filter(item => item && typeof item === 'object' && !Array.isArray(item) && item.phase === 'recent'), []);
     assert.ok(!JSON.stringify(await payloads.value('reader', frame.contentRef.payloadId)).includes(pending.id));
     assert.equal(Object.isFrozen(frame), true); assert.equal(Object.isFrozen(frame.content), true);
     await assert.rejects(preparePerception(store, payloads, 'other', [second], 'stable-message', 8192), /其他角色/);

@@ -1,6 +1,6 @@
 services:
   kwagent:
-    image: ${KW_IMAGE:-ghcr.io/kengwang/kwagent:0.5.3}
+    image: ${KW_IMAGE:-ghcr.io/kengwang/kwagent:0.5.4}
     init: true
     restart: unless-stopped
     env_file:

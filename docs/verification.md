@@ -1,5 +1,9 @@
 # 验收记录
 
+## v0.5.4
+
+生产最近感知帧确认每条新消息包含 1 条 `current` 和最多 20 条重复 `recent`，单帧约 4.1–4.5K Token。修复后消息触发步骤不再装配 `recent`；本地 54 项测试通过，新增回归确认已完成历史不会进入当前消息感知帧。
+
 ## v0.5.3
 
 修复模型提供商保存错误。`bundle-config.test.ts` 验证 `cordis.patch.yml` 中的 provider 是普通对象，没有 `providers.__jsExpr`；真实 profile 加载和保存路径不再依赖动态表达式节点。
