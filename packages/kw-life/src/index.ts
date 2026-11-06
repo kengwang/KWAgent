@@ -34,6 +34,7 @@ import { RoleLifecycle } from './lifecycle.ts';
 import { readPreinjectSkills } from './preinject.ts';
 import { RoleSkills } from './skills.ts';
 import { RolePolicy } from './policy.ts';
+import { retireStepContexts } from './step-context.ts';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import { workspaceDomainState } from '@deepseek-ai/dsh-workspace';
 import type {} from '@deepseek-ai/dsh-storage-domain';
@@ -310,6 +311,7 @@ export class Life extends Service {
         const ref = await this.ctx.kwMind.payloads.put(roleId, `step:${role.sessionId}:${payload.turn}:${payload.step}`, asJson(JSON.parse(frozen)), payload.signal);
         appendPluginRecord(payload.agent.session, 'plugin:kwagent/context', asJson({ roleId, turn: payload.turn, step: payload.step, ...ref, estimatedTokens: tokens(frozen), inputs: payload.messages.map(message => message.id) }));
         const activity = this.activities.current(roleId); if (activity) this.store.link(activity.id, 'context', `${payload.turn}:${payload.step}`, asJson(ref));
+        retireStepContexts(payload.agent.session, payload.turn, payload.step);
         return next();
       });
       agentCtx.tools.guard(() => this.admission(roleId) ?? undefined);
