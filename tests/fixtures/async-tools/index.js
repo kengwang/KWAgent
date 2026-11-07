@@ -3,6 +3,7 @@ import { mkdir, readFile, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
+import { executionOrigin } from '@kwagent/core';
 
 export const name = 'kwagent-async-verification';
 export const inject = ['kwLife', 'webServer', 'tools', 'llm', 'jobs'];
@@ -10,7 +11,7 @@ export function apply(ctx) {
   if (process.env.KW_ASYNC_TEST !== 'true' || !/^(127\.0\.0\.1|localhost)$/.test(new URL(process.env.KW_PUBLIC_URL).hostname)) throw new Error('异步验收只允许隔离的本机实例');
   const life = ctx.kwLife, id = 'async-probe', directory = join(process.env.KW_DATA_ROOT, 'workspaces', id);
   const requests = [];
-  ctx.on('llm/stream', async function* (options, next) { if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) requests.push({ at: Date.now(), tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) }); yield* next(); });
+  ctx.on('llm/stream', async function* (options, next) { if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) requests.push({ at: Date.now(), origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) }); yield* next(); });
   ctx.tools.guard(exec => /mcp__lagrange__/.test(exec.name) ? '异步验收禁止社交工具' : undefined);
   ctx.tools.register({ name: 'verification_async_file', description: '等待指定时间后实际写入隔离文件。', parameters: { type: 'object', properties: { marker: { type: 'string' }, delay: { type: 'number' } }, required: ['marker', 'delay'] }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (args, exec) => {
     await mkdir(directory, { recursive: true });
