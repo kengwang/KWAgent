@@ -44,6 +44,13 @@ try {
   assert.equal(finished.events.length, 1);
   const explicit = await call({ action: 'execute', background: true, code: 'return await tools.verification_async_file({marker:"cancelled",delay:60000});' });
   assert.ok(explicit.elapsed < 1500, explicit.elapsed);
+  assert.match(explicit.result.results[0].result.value.background.meaning, /自动.*送达/);
+  const pending = await call({ action: 'execute', code: `return await tools.job_output({job_id:${JSON.stringify(explicit.result.results[0].result.value.background.jobId)},wait:true,timeout_ms:50});` });
+  assert.equal(pending.result.results[0].result.isError, false, JSON.stringify(pending));
+  assert.equal(pending.result.results[0].result.value.result.job.status, 'running');
+  assert.equal(pending.result.results[0].result.value.result.resultRef, null);
+  assert.match(pending.result.results[0].result.value.result.instruction, /不要重复提交原操作或循环查询/);
+  assert.ok(pending.result.results[0].result.content.some(block => block.type === 'text' && block.text.includes('不要重复提交原操作或循环查询')));
   await call({ action: 'pause' });
   const paused = await state(); assert.ok(!paused.executions.includes('cancelled')); assert.ok(paused.tasks.items.some(task => task.state === 'cancelled'));
   const ids = paused.events.map(event => event.id);
@@ -66,6 +73,7 @@ try {
   assert.ok(shellDone.resultRef);
   const shellRead = await call({ action: 'execute', code: `return await tools.job_output({job_id:${JSON.stringify(shellDone.jobId)}});` });
   assert.equal(shellRead.result.results[0].result.isError, false, JSON.stringify(shellRead)); assert.ok(JSON.stringify(shellRead.result).includes('actual-shell-background'));
+  assert.match(shellRead.result.results[0].result.value.result.instruction, /终态结果/);
   await sharp({ create: { width: 24, height: 24, channels: 3, background: '#3399ff' } }).png().toFile(join(root, 'workspaces/async-probe/actual.png'));
   const image = await call({ action: 'execute', background: true, code: `await tools.read_image({file_path:${JSON.stringify(join(root, 'workspaces/async-probe/actual.png'))}}); return "actual-image-read";` });
   const imageTask = image.result.results[0].result.value.background;
