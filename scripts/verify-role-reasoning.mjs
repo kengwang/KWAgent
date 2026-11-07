@@ -109,6 +109,7 @@ try {
   await page.getByRole('button', { name: '保存角色', exact: true }).click();
   await page.getByRole('button', { name: '编辑角色', exact: true }).waitFor();
   await page.getByRole('button', { name: '编辑角色', exact: true }).click();
+  await expect(page.getByLabel('对话推理等级', { exact: true })).toBeEnabled();
   await expect(page.getByLabel('对话推理等级', { exact: true })).toHaveValue('high');
   await mkdir('.artifacts/browser', { recursive: true });
   await page.getByLabel('对话推理等级', { exact: true }).scrollIntoViewIfNeeded();
