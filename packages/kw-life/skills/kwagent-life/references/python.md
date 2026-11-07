@@ -1,15 +1,15 @@
 # Python 与浏览器
 
-在当前角色的工作目录操作。`.venv` 保存本角色的额外依赖，`browser-profile` 可以保存浏览器登录状态，脚本、截图和下载均随工作目录持久保存。
+所有角色共用 `/data/python/.venv`，使用 uv 安装的依赖对所有角色生效。脚本、浏览器登录状态 `browser-profile`、截图和下载保存在各自工作目录。共享环境和角色工作目录均持久保存。
 
 ```sh
-. .venv/bin/activate
+. /data/python/.venv/bin/activate
 python --version
-uv pip install --python .venv/bin/python 包名
+uv pip install --python /data/python/.venv/bin/python 包名
 python script.py
 ```
 
-每次 shell 工具调用都有自己的环境，激活需要在同一次调用内完成。也可以直接执行 `.venv/bin/python script.py`。不需要重新安装 uv、Playwright 或浏览器。基础 Playwright 与浏览器由镜像配套管理，其他 Python 包安装到本角色的 venv；不要向系统 Python 安装包。
+每次 shell 工具调用都有自己的环境，激活需要在同一次调用内完成。也可以直接执行 `/data/python/.venv/bin/python script.py`。将 Python 代码保存为 `.py` 文件，再通过命令执行工具运行；`run_code` 的 `code` 使用 JavaScript，通过工具 SDK 调用执行能力。不需要重新安装 uv、Playwright 或浏览器。基础 Playwright 与浏览器由镜像配套管理，其他 Python 包安装到共享 venv；不要向系统 Python 安装包。
 
 使用 Python Playwright 操作浏览器，例如保存实际打开页面的截图：
 

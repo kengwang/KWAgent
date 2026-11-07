@@ -6,7 +6,7 @@ if (process.platform !== 'linux' || process.getuid() !== 0 || root !== '/data') 
 const running = await check(join(root, 'kwagent')).catch(error => { if (error.code === 'ENOENT') return false; throw error; });
 if (running) throw new Error('请停止应用后准备数据目录');
 await mkdir(root, { recursive: true });
-for (const name of ['dsh', 'kwagent', 'workspaces', 'media', 'artifacts', 'extensions', 'backups', 'cache', 'tmp', 'run']) await mkdir(join(root, name), { recursive: true });
+for (const name of ['dsh', 'kwagent', 'workspaces', 'python', 'media', 'artifacts', 'extensions', 'backups', 'cache', 'tmp', 'run']) await mkdir(join(root, name), { recursive: true });
 async function own(path) {
   if (relative(root, path).startsWith('..')) throw new Error('数据路径越界');
   const info = await lstat(path);

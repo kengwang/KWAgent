@@ -1,5 +1,11 @@
 # 验收记录
 
+## v0.6.1
+
+55 项自动检查通过。共享 Python 的实际容器验收确认并行准备返回同一个 `/data/python/.venv/bin/python`，通过 uv 安装的包可以从不同角色工作目录导入，已有包在再次准备和断网重建后保留。Chromium 的页面操作、下载、截图、Cookie 与 localStorage 恢复通过。
+
+断网镜像验收将共享环境写入完整备份并恢复到独立目录，实际启动恢复后的 Python，确认解释器前缀和 Playwright 导入正确。日志位于 `.artifacts/verification/shared-python-ci.log`、`shared-python-image.log` 和 `shared-python-runtime.log`。本次验收没有模型和社交发送调用。
+
 ## v0.6.0
 
 本地 Linux amd64 镜像通过 `verify-image.mjs`：UID 10001、断网 Harness、真实 Python venv、Chromium 页面交互、中文截图、实际下载、SQLite、单实例和完整备份恢复全部通过。55 项自动测试、构建、类型检查及凭据检查通过。

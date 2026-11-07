@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, prepareRolePython } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, preparePython } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store, ContinuityScene } from '@kwagent/core';
 import { mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -240,14 +240,14 @@ export class Life extends Service {
     const role = this.store.role(roleId);
     const workspace = join(this.config.dataRoot, 'workspaces', roleId);
     await mkdir(workspace, { recursive: true });
-    const python = process.env.KW_CONTAINER === 'true' ? await prepareRolePython(workspace) : null;
+    const python = process.env.KW_CONTAINER === 'true' ? await preparePython(this.config.dataRoot) : null;
     const setup = async (agentCtx: Context, agent: Agent) => {
       installModelSelection(agentCtx);
       await this.ctx.agentPresets.mount(agentCtx, 'kwagent');
       this.ctx.kwMind.attach(agentCtx, roleId);
       await this.ctx.kwLagrange.attach(agentCtx, roleId);
       await this.roleSkills.attach(agentCtx, roleId);
-      if (python) agentCtx.systemPrompt.section({ name: 'deployment:kwagent-python', order: 10090, interpolate: false, text: `当前角色有持久 Python 环境：${python}。在自己的工作目录执行 . .venv/bin/activate 即可激活，也可直接使用这个 Python 路径；每次 shell 调用单独激活。使用 uv pip install --python .venv/bin/python 包名 安装依赖，保存在本角色的 .venv 中，容器重建后仍保留。已提供 Python Playwright 与无界面 Chromium，可通过 playwright.sync_api 或 async_api 控制浏览器，无需重新安装浏览器。浏览器登录资料使用工作目录内的 browser-profile，截图和下载也保存在自己的工作目录；完成后关闭浏览器。具体示例见 kwagent-life Skill 的 references/python.md。` });
+      if (python) agentCtx.systemPrompt.section({ name: 'deployment:kwagent-python', order: 10090, interpolate: false, text: `已配置共享的持久 Python 环境：${python}，所有角色共用依赖。执行 . ${join(this.config.dataRoot, 'python/.venv/bin/activate')} 即可激活，也可直接使用这个 Python 路径；每次 shell 调用单独激活。使用 uv pip install --python ${python} 包名 安装依赖，容器重建后仍保留，包修改对所有角色生效。已提供 Python Playwright 与无界面 Chromium，可通过 playwright.sync_api 或 async_api 控制浏览器，无需重新安装浏览器。脚本、浏览器登录资料 browser-profile、截图和下载保存在各自工作目录；完成后关闭浏览器。具体示例见 kwagent-life Skill 的 references/python.md。` });
       registerTool(agentCtx, 'life_plan', '管理自己的目标、条件事项和唤醒安排。可以自行创建、修改、完成或取消。', planRequestSchema, input => this.plans.mutate(roleId, input, asJson(this.policy.current(roleId))));
       registerTool(agentCtx, 'extension_manage', '使用 Bun 管理自己的 Skill、脚本与 Node ESM 扩展依赖。', extensionRequestSchema, (input, exec) => this.extensions.manage(roleId, input, agentCtx, exec.signal));
       agentCtx.systemPrompt.context({ name: 'kw-life-state', order: 900, required: true, interpolate: false, text: () => { const frozen = this.ctx.kwMind.steps.get(roleId); if (!frozen) return ''; const snapshot = JSON.parse(frozen); return JSON.stringify({ ...snapshot, preinjectSkills: (snapshot.preinjectSkills ?? []).map(({ content: _content, ...record }: { content: string; [key: string]: unknown }) => record) }); } });

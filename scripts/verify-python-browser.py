@@ -17,7 +17,8 @@ thread.start()
 try:
     if mode != 'image':
         import idna
-        assert pathlib.Path(idna.__file__).is_relative_to(workspace / '.venv')
+        assert pathlib.Path(idna.__file__).is_relative_to(pathlib.Path(sys.prefix))
+        assert pathlib.Path(sys.prefix) == pathlib.Path('/data/python/.venv')
         assert idna.__version__ == '3.11'
     with sync_playwright() as playwright:
         context = playwright.chromium.launch_persistent_context(str(workspace / 'browser-profile'), headless=True, accept_downloads=True)

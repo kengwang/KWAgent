@@ -4,7 +4,7 @@ import { mkdir, readdir } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Store, Payloads, prepareRolePython } from '@kwagent/core';
+import { Store, Payloads, preparePython } from '@kwagent/core';
 import { resolve } from 'node:path';
 
 assert.equal(process.platform, 'linux');
@@ -16,7 +16,8 @@ for (const [command, args] of [['bun', ['--version']], ['git', ['--version']], [
   if (command === 'bun') assert.equal(result.stdout.trim(), '1.4.2');
   if (command === 'uv') assert.match(result.stdout, /^uv 0\.13\.7\b/);
 }
-const python = await prepareRolePython('/data/workspaces/image-python');
+const python = await preparePython('/data');
+await mkdir('/data/workspaces/image-python', { recursive: true });
 const browser = spawnSync(python, [resolve('scripts/verify-python-browser.py'), 'image'], { cwd: '/data/workspaces/image-python', encoding: 'utf8', timeout: 60000 });
 assert.equal(browser.status, 0, browser.stderr || browser.stdout);
 console.log(browser.stdout.trim());
@@ -66,6 +67,9 @@ try {
   admin('quiesce');
   const backup = admin('backup');
   const restored = spawnSync(process.execPath, ['scripts/admin.mjs', 'restore', backup.directory, '/data/tmp/image-restored'], { encoding: 'utf8', timeout: 20000 }); assert.equal(restored.status, 0, restored.stderr);
+  assert.ok(existsSync('/data/tmp/image-restored/python/.venv/pyvenv.cfg'));
+  const restoredPython = spawnSync('/data/tmp/image-restored/python/.venv/bin/python', ['-c', 'import sys; from playwright.sync_api import sync_playwright; assert sys.prefix == "/data/tmp/image-restored/python/.venv"'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(restoredPython.status, 0, restoredPython.stderr);
   const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
   try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.deepEqual(store.role(role.id).preinjectSkills, role.preinjectSkills); assert.deepEqual(store.role(role.id).adminQQs, role.adminQQs); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
   admin('shutdown');

@@ -110,7 +110,7 @@ export class Operations {
   async start(): Promise<void> {
     if (this.server) return;
     const root = this.life.config.dataRoot;
-    for (const name of ['run', 'backups', 'tmp', 'workspaces', 'extensions', 'cache', 'media', 'artifacts']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
+    for (const name of ['run', 'backups', 'tmp', 'workspaces', 'python', 'extensions', 'cache', 'media', 'artifacts']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
     const socket = adminSocket(root);
     if (process.platform !== 'win32') await unlink(socket).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; });
     this.server = createServer((request, response) => {
@@ -151,7 +151,7 @@ export class Operations {
       await this.life.quiesce();
       await mkdir(join(directory, 'kwagent'), { recursive: true, mode: 0o700 });
       await this.life.store.backup(join(directory, 'kwagent', 'state.sqlite'));
-      for (const name of ['dsh', 'workspaces', 'extensions', 'media', 'artifacts']) {
+      for (const name of ['dsh', 'workspaces', 'python', 'extensions', 'media', 'artifacts']) {
         const source = name === 'dsh' ? process.env.DSH_HOME ?? join(root, name) : join(root, name);
         if (await exists(source)) await cp(source, join(directory, name), { recursive: true, dereference: false, filter: path => !path.endsWith('.lock') && !path.includes(`${sep}node_modules${sep}.cache`) });
       }
@@ -207,5 +207,5 @@ export async function restoreBackup(source: string, destination: string): Promis
   await mkdir(root, { recursive: true });
   const entries = await readdir(root);
   if (entries.some(name => !['backups', 'run', 'cache', 'tmp'].includes(name))) throw new Error('恢复目标需要使用独立的空数据目录');
-  for (const name of ['kwagent', 'dsh', 'workspaces', 'extensions', 'media', 'artifacts']) if (await exists(join(source, name))) await cp(join(source, name), join(root, name), { recursive: true, dereference: false });
+  for (const name of ['kwagent', 'dsh', 'workspaces', 'python', 'extensions', 'media', 'artifacts']) if (await exists(join(source, name))) await cp(join(source, name), join(root, name), { recursive: true, dereference: false });
 }

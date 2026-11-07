@@ -20,7 +20,7 @@ process.env.DSH_TELEMETRY_MODE = 'DISABLED';
 process.env.DSH_TELEMETRY_DISABLED = 'true';
 process.env.DSH_PERMISSION_MODE ??= 'danger-full-access';
 process.env.NODE_USE_ENV_PROXY ??= '1';
-for (const name of ['dsh', 'kwagent', 'tmp', 'run', 'cache', 'backups', 'media', 'artifacts', 'extensions', 'workspaces']) await mkdir(join(data, name), { recursive: true, mode: 0o700 });
+for (const name of ['dsh', 'kwagent', 'tmp', 'run', 'cache', 'backups', 'media', 'artifacts', 'extensions', 'workspaces', 'python']) await mkdir(join(data, name), { recursive: true, mode: 0o700 });
 const releaseInstance = lockSync(join(data, 'run'), { realpath: true, stale: 30000, update: 5000, retries: 0 });
 process.once('exit', () => releaseInstance());
 const profile = join(process.env.DSH_HOME, 'profiles', 'kwagent');
