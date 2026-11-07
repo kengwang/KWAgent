@@ -33,7 +33,7 @@ try {
   await writeFile('.artifacts/verification/async-notification.json', JSON.stringify(report, null, 2));
   assert.equal(result.executions.filter(marker => marker === 'notification-source').length, 1, '后台操作重复执行');
   assert.ok(result.executions.indexOf('notification-independent') < result.executions.indexOf('notification-source'), '后台执行阻塞独立事项');
-  assert.ok(result.readQueues.length <= 1, '反复查询后台结果');
+  assert.equal(result.readQueues.length, 0, '完成结果已自动送达，不应调用job_output或job_list查询');
   assert.equal(result.events.length, 1, '产生重复完成通知');
   console.log(JSON.stringify(report));
 } finally { if (host?.exitCode === null) admin('role.control', { id: 'async-probe', state: 'paused' }); await stop(); closeSync(log); }

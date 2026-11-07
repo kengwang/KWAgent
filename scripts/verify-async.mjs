@@ -44,13 +44,15 @@ try {
   assert.equal(finished.events.length, 1);
   const explicit = await call({ action: 'execute', background: true, code: 'return await tools.verification_async_file({marker:"cancelled",delay:60000});' });
   assert.ok(explicit.elapsed < 1500, explicit.elapsed);
-  assert.match(explicit.result.results[0].result.value.background.meaning, /自动.*送达/);
+  assert.match(explicit.result.results[0].result.value.background.meaning, /自动通知/);
+  assert.match(explicit.result.results[0].result.value.background.read.when, /收到完成通知后/);
   const pending = await call({ action: 'execute', code: `return await tools.job_output({job_id:${JSON.stringify(explicit.result.results[0].result.value.background.jobId)},wait:true,timeout_ms:50});` });
   assert.equal(pending.result.results[0].result.isError, false, JSON.stringify(pending));
   assert.equal(pending.result.results[0].result.value.result.job.status, 'running');
   assert.equal(pending.result.results[0].result.value.result.resultRef, null);
-  assert.match(pending.result.results[0].result.value.result.instruction, /不要重复提交原操作或循环查询/);
-  assert.ok(pending.result.results[0].result.content.some(block => block.type === 'text' && block.text.includes('不要重复提交原操作或循环查询')));
+  assert.match(pending.result.results[0].result.value.result.instruction, /停止查询/);
+  assert.match(pending.result.results[0].result.value.result.instruction, /自动通知并唤醒/);
+  assert.ok(pending.result.results[0].result.content.some(block => block.type === 'text' && block.text.includes('停止查询')));
   await call({ action: 'pause' });
   const paused = await state(); assert.ok(!paused.executions.includes('cancelled')); assert.ok(paused.tasks.items.some(task => task.state === 'cancelled'));
   const ids = paused.events.map(event => event.id);

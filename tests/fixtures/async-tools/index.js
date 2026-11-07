@@ -12,7 +12,7 @@ export function apply(ctx) {
   const life = ctx.kwLife, id = 'async-probe', directory = join(process.env.KW_DATA_ROOT, 'workspaces', id);
   const requests = [], turnEnds = [], readQueues = [];
   ctx.on('session/event', (session, event) => { if (session.id === life.store.role(id).sessionId && event.type === 'turn/end') turnEnds.push(event.data); });
-  ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === 'job_output') readQueues.push({ at: Date.now(), arguments: exec.arguments, queued: exec.agent.inbox.nextStep.some(message => message.source.kind === 'kw-event' && message.source.eventIds.some(id => life.store.event(id).type === 'background-result')) }); return next(); });
+  ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === 'job_output' || exec.name === 'job_list') readQueues.push({ at: Date.now(), name: exec.name, arguments: exec.arguments, queued: exec.agent.inbox.nextStep.some(message => message.source.kind === 'kw-event' && message.source.eventIds.some(id => life.store.event(id).type === 'background-result')) }); return next(); });
   ctx.on('llm/stream', async function* (options, next) {
     if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) {
       requests.push({ at: Date.now(), provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort ?? null, origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) });

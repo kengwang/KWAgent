@@ -18,7 +18,7 @@ export class AsyncExecutor implements ToolExecutor {
   private readonly logged = new Set<string>();
   constructor(readonly ctx: Context, readonly tasks: Tasks) {
     this.ptc = new PtcExecutor(ctx);
-    this.sections = [...this.ptc.sections, { name: 'tools:kw-async', order: 10105, interpolate: false, text: `run_code支持run_in_background:true立即提交整段后台程序；普通程序等待${tasks.life.config.asyncForegroundWaitMs}毫秒后自动转入后台。保存jobId后继续独立活动或结束当前回复，完成结果会自动作为新输入到达。预计耗时且认为对方需要知道时，可以在启动后简短告知正在处理；是否告知完全由你结合场合判断，也可以直接等待结果。告知启动不代表操作完成。收到句柄后无需立即调用job_output，也无需sleep或循环查询。job_output的job.status为running或stopping时，原程序仍未结束，不能因正文为空重新提交相同操作；空正文单独不能判断任务状态。wait:true查询超时只结束查询等待；查询程序结束也不表示被查询任务结束。确实需要既有结果时读取一次，随后依据目标job.status和resultRef判断。已有子调用及程序内await继续执行，不要求结束回复前收集全部任务。job_kill请求取消。` }];
+    this.sections = [...this.ptc.sections, { name: 'tools:kw-async', order: 10105, interpolate: false, text: `run_code支持run_in_background:true立即提交整段后台程序；普通程序等待${tasks.life.config.asyncForegroundWaitMs}毫秒后自动转入后台。后台任务完成、失败或取消后，系统会自动发送结果通知并唤醒你，结束当前回复不会取消任务。收到background句柄后不要轮询结果：不要调用job_output或job_list检查是否完成，不要通过wait:true、sleep、循环、另一个后台程序或定时计划反复检查。即使后续操作依赖该结果，也应结束当前活动，收到自动通知后再继续。可以继续独立活动或处理新消息；没有其他事项就直接结束本轮，等待系统通知。预计耗时且认为对方需要知道时，可以在启动后简短告知正在处理；是否告知完全由你结合场合判断。告知启动不代表操作完成。完成通知包含状态、结果预览和resultRef，优先直接使用；仅在收到通知后需要补充具体内容，或用户明确要求查看某项任务时，按需读取一次job_output或payload_read。job_output的job.status为running或stopping时停止查询，继续等待自动通知；空正文和查询超时都不表示失败，不要重新提交相同操作。已有子调用及程序内await继续执行，无需结束回复前收集全部任务。job_kill请求取消。` }];
     const schema = this.ptc.describe([]).schemas[0]!;
     this.transport = {
       ...schema,
@@ -53,7 +53,7 @@ export class AsyncExecutor implements ToolExecutor {
           return result.value;
         }
         const current = tasks.promote(task.roleId, task.id);
-        return { background: { taskId: task.id, jobId: task.jobId, status: current.state, meaning: '后台任务已提交，完成结果会自动作为新输入送达。可以继续独立活动或结束当前回复；无需立即查询、循环等待或重新提交相同操作。', read: { tool: 'job_output', arguments: { job_id: task.jobId } } } };
+        return { background: { taskId: task.id, jobId: task.jobId, status: current.state, meaning: '后台任务已提交。完成、失败或取消后系统会自动通知并唤醒你；结束本轮不会取消任务。不要轮询job_output/job_list，不要sleep、循环、wait:true或创建定时查询。即使依赖结果也先结束本轮，收到自动通知后再继续；有其他独立事项可以先处理。不要重复提交相同操作。', read: { when: '收到完成通知后确实需要补充内容，或用户明确要求查看此任务时，读取一次。', tool: 'job_output', arguments: { job_id: task.jobId } } } };
       },
     };
     this.pipeline = new ToolExecutionPipeline(ctx, { get: name => name === 'run_code' ? this.transport : undefined });
