@@ -6,6 +6,8 @@
 
 单独使用真实后台任务唤醒模型，确认新模型请求的任务执行上下文为空，后台任务归属不会沿唤醒传入新的模型步骤。结果位于 `.artifacts/verification/async-origin.json`。
 
+生产通过固定 digest 的 `v0.7.0` 镜像更新，原有角色、Session、事件和 Schema 4 保留。已完成完整备份，确认任务记录、MCP、SSE、共享 Python 与 Chromium 正常；应用继续仅使用 `1panel-network`，没有宿主端口映射。
+
 实际原生任务、图片读取、大结果分页、失败修正、暂停取消、Session 重置取消和强制终止后的中断恢复通过。未结束程序不会在重启后重放，稳定结果事件保持原标识。完整备份恢复到独立目录后，实际 SQLite 和负载读取保留任务及长内容。
 
 浏览器验收完成任务详情、实际取消、重载恢复以及桌面和窄屏检查。Linux amd64 镜像以非 root、断网方式通过真实 Harness、数据库、单实例和完整备份恢复检查。具体结果位于忽略目录 `.artifacts/verification/async*.json`、`async-image.log`，截图位于 `.artifacts/browser/async-*.png`。最终发布镜像的相同检查由对应标签的 GitHub Actions 执行。
