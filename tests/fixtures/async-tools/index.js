@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, appendFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
@@ -10,11 +10,24 @@ export const inject = ['kwLife', 'webServer', 'tools', 'llm', 'jobs'];
 export function apply(ctx) {
   if (process.env.KW_ASYNC_TEST !== 'true' || !/^(127\.0\.0\.1|localhost)$/.test(new URL(process.env.KW_PUBLIC_URL).hostname)) throw new Error('异步验收只允许隔离的本机实例');
   const life = ctx.kwLife, id = 'async-probe', directory = join(process.env.KW_DATA_ROOT, 'workspaces', id);
-  const requests = [];
-  ctx.on('llm/stream', async function* (options, next) { if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) requests.push({ at: Date.now(), origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) }); yield* next(); });
+  const requests = [], turnEnds = [], readQueues = [];
+  ctx.on('session/event', (session, event) => { if (session.id === life.store.role(id).sessionId && event.type === 'turn/end') turnEnds.push(event.data); });
+  ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === 'job_output' && process.env.KW_ASYNC_RACE_TEST === 'true') readQueues.push({ queued: exec.agent.inbox.nextStep.some(message => message.source.kind === 'kw-event' && message.source.eventIds.some(id => life.store.event(id).type === 'background-result')) }); return next(); });
+  ctx.on('llm/stream', async function* (options, next) {
+    if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) {
+      requests.push({ at: Date.now(), origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) });
+      if (process.env.KW_ASYNC_RACE_TEST === 'true' && life.tasks.list({ roleId: id, cursor: 0, limit: 200 }).items.some(task => task.mode === 'background' && task.state === 'running')) await writeFile(join(directory, 'race-release'), '真实后续模型请求已经开始');
+    }
+    yield* next();
+  });
   ctx.tools.guard(exec => /mcp__lagrange__/.test(exec.name) ? '异步验收禁止社交工具' : undefined);
   ctx.tools.register({ name: 'verification_async_file', description: '等待指定时间后实际写入隔离文件。', parameters: { type: 'object', properties: { marker: { type: 'string' }, delay: { type: 'number' } }, required: ['marker', 'delay'] }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (args, exec) => {
     await mkdir(directory, { recursive: true });
+    if (args.marker === 'race-source') for (;;) {
+      const ready = await access(join(directory, 'race-release')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
+      if (ready) break;
+      await delay(50, undefined, { signal: exec.signal });
+    }
     await delay(args.delay, undefined, { signal: exec.signal });
     await appendFile(join(directory, 'executions.txt'), `${args.marker}\n`);
     return { marker: args.marker, actualWrite: true };
@@ -30,7 +43,7 @@ export function apply(ctx) {
       if (request.method === 'GET') {
         const file = join(directory, 'executions.txt');
         const executions = await readFile(file, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
-        return send({ tasks: life.tasks.list({ roleId: id, cursor: 0, limit: 200 }), executions: executions.trim().split('\n').filter(Boolean), requests, agentStatus: life.handles.get(id)?.agent.status, runtime: life.runtime.get(id), events: life.store.events(id, 100).filter(event => event.type === 'background-result').map(event => ({ id: event.id, delivery: life.store.deliveryStatus(event.id), payload: event.payload })) });
+        return send({ tasks: life.tasks.list({ roleId: id, cursor: 0, limit: 200 }), executions: executions.trim().split('\n').filter(Boolean), requests, turnEnds, readQueues, agentStatus: life.handles.get(id)?.agent.status, runtime: life.runtime.get(id), events: life.store.events(id, 100).filter(event => event.type === 'background-result').map(event => ({ id: event.id, delivery: life.store.deliveryStatus(event.id), payload: event.payload })) });
       }
       const body = JSON.parse(Buffer.concat(await Array.fromAsync(request)).toString('utf8'));
       if (body.action === 'execute') {

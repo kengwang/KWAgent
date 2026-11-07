@@ -325,7 +325,8 @@ export class Life extends Service {
           admitted.push(message);
         }
         payload.messages.splice(0, payload.messages.length, ...admitted);
-        if (hadInput && !payload.messages.length) { this.policy.release(roleId); return { kind: 'reject' }; }
+        // 重复通知可以被过滤，当前 turn 的工具结果仍需进入下一模型步骤。
+        if (hadInput && !payload.messages.length && payload.step === 1) { this.policy.release(roleId); return { kind: 'reject' }; }
         if (payload.messages.length) this.contexts.set(roleId, await this.ctx.kwMind.context(roleId, [scene.query, ...scheduleContext].filter(Boolean).join('\n'), payload.signal));
         this.scenes.set(roleId, scene);
         await this.syncContinuity(roleId);
