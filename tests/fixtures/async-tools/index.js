@@ -51,7 +51,7 @@ export function apply(ctx) {
         const role = life.store.role(id);
         if (role.state !== 'active') life.store.updateRole(id, { state: 'active' }, role.revision, 'owner', '隔离工具执行验收');
         const start = performance.now();
-        const result = await ctx.tools.execute({ agent, signal: AbortSignal.timeout(60000), calls: [{ type: 'tool-call', id: `async-test-${randomUUID()}`, name: 'run_code', arguments: JSON.stringify({ code: body.code, description: '真实异步程序验收', ...body.background === undefined ? {} : { run_in_background: body.background } }) }] });
+        const result = await ctx.tools.execute({ agent, signal: AbortSignal.timeout(60000), calls: [{ type: 'tool-call', id: `async-test-${randomUUID()}`, name: 'run_code', arguments: JSON.stringify({ code: body.code, description: '真实异步程序验收', ...body.background === undefined ? {} : { run_in_background: body.background }, ...body.timeoutMs === undefined ? {} : { timeoutMs: body.timeoutMs } }) }] });
         return send({ elapsed: performance.now() - start, result });
       }
       if (body.action === 'pause') { await life.control(id, 'paused'); return send({ paused: true }); }
