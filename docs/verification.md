@@ -1,8 +1,10 @@
 # 验收记录
 
-## v0.8.2
+## v0.8.3
 
 61 项自动测试通过，覆盖聊天引用的严格输入、连接与凭据隔离，以及实际 SQLite 中预设思考等级继承、角色覆盖和旧配置读取。
+
+无凭据的隔离 Harness 实际返回空模型目录，并拒绝保存不可用引用；未调用任何模型。结果位于 `.artifacts/verification/harness-empty-catalog.log`。
 
 真实 Harness 使用官方 `deepseek-official / deepseek-flash` 完成模型请求，预设 `low` 和角色覆盖 `high` 分别生效。新增目录分页、未知模型与不支持等级拒绝、原配置及凭据文件保持不变的检查，并继续通过版本冲突、重启和完整备份恢复验收。实际报告位于 `.artifacts/verification/model-presets.json`。
 

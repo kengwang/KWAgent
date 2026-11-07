@@ -42,7 +42,7 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
-v0.8.2 的聊天预设从 Harness 已配置的模型目录下拉选择，并校验提供商与实际模型标识。预设默认思考等级和角色单独设置分别保存，连接与凭据继续由 Harness 管理。详见 [模型配置](docs/models.md)。
+v0.8.3 的聊天预设从 Harness 已配置的模型目录下拉选择，并校验提供商与实际模型标识。预设默认思考等级和角色单独设置分别保存，连接与凭据继续由 Harness 管理。详见 [模型配置](docs/models.md)。
 
 v0.8.1 明确后台任务完成后自动通知并唤醒角色。收到句柄后结束当前活动或处理独立事项，收到通知后再继续依赖结果的操作；执行器、任务回执、查询说明及生图 Skill 统一要求不要轮询。详见 [发布说明](docs/releases/v0.8.1.md)。
 
