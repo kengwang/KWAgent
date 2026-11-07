@@ -13,6 +13,11 @@
 !deploy/
 !deploy/**
 **/node_modules
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/browser-profile
+**/browser-output
 **/lib
 **/.env
 **/.env.*

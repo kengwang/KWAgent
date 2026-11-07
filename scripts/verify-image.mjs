@@ -4,16 +4,22 @@ import { mkdir, readdir } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { Store, Payloads } from '@kwagent/core';
+import { Store, Payloads, prepareRolePython } from '@kwagent/core';
+import { resolve } from 'node:path';
 
 assert.equal(process.platform, 'linux');
 assert.equal(process.getuid(), 10001);
 assert.equal(process.versions.node, '24.18.0');
 for (const path of ['.env', '.git', '.artifacts', 'scripts/verify-social.mjs']) assert.equal(existsSync(path), false, path);
-for (const [command, args] of [['bun', ['--version']], ['git', ['--version']], ['ffmpeg', ['-version']]]) {
+for (const [command, args] of [['bun', ['--version']], ['git', ['--version']], ['ffmpeg', ['-version']], ['uv', ['--version']]]) {
   const result = spawnSync(command, args, { encoding: 'utf8' }); assert.equal(result.status, 0, command);
   if (command === 'bun') assert.equal(result.stdout.trim(), '1.4.2');
+  if (command === 'uv') assert.match(result.stdout, /^uv 0\.13\.7\b/);
 }
+const python = await prepareRolePython('/data/workspaces/image-python');
+const browser = spawnSync(python, [resolve('scripts/verify-python-browser.py'), 'image'], { cwd: '/data/workspaces/image-python', encoding: 'utf8', timeout: 60000 });
+assert.equal(browser.status, 0, browser.stderr || browser.stdout);
+console.log(browser.stdout.trim());
 await mkdir('/data/tmp', { recursive: true });
 const log = createWriteStream('/data/tmp/image-smoke.log');
 const child = spawn(process.execPath, ['scripts/start.mjs'], { env: { ...process.env, KW_BIND_IP: '127.0.0.1', LAGRANGE_BASE_URL: 'http://127.0.0.1:9/', LAGRANGE_TOOL_TIMEOUT_MS: '1000', KW_BACKUP_ENABLED: 'false' }, stdio: ['ignore', 'pipe', 'pipe'] });

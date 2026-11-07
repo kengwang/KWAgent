@@ -21,7 +21,7 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 ```dotenv
 COMPOSE_PROJECT_NAME=kwagent
 COMPOSE_FILE=compose.yml:compose.kwagent.yaml
-KW_IMAGE=ghcr.io/kengwang/kwagent:0.5.5
+KW_IMAGE=ghcr.io/kengwang/kwagent:0.6.0
 KW_DATA_ROOT=./data/agent
 KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
 ```
@@ -38,9 +38,25 @@ docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 
 反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
 
-需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.5.5` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
+需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.6.0` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
 
 `.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
+
+## 持久 Python 与浏览器
+
+镜像包含 Python 3.11、uv 0.13.7、Python Playwright 1.64.1 和对应的无界面 Chromium。首次准备角色 Agent 时，使用 uv 在 `/data/workspaces/<角色ID>/.venv` 创建环境。环境共享镜像内只读的 Playwright 基础包，每个角色额外安装的 Python 包只保存在自己的 venv。重启继续准备现有环境，保留已安装的包。
+
+`/data` 已持久挂载，因此 venv、脚本、浏览器 `browser-profile`、截图和下载均可跨容器重建保留。uv 缓存位于 `/data/cache/uv`。如需单独保存工作目录，可在 Compose 的 `volumes` 中额外添加 `./workspaces:/data/workspaces`；挂载后在停机状态执行上述权限准备命令。浏览器 profile 包含登录资料，属于持久私密数据，随工作目录进入完整备份。
+
+角色的固定系统提示包含当前解释器路径与简短用法，详细 Python 浏览器示例位于 `kwagent-life` 的 `references/python.md`。工作目录内使用：
+
+```sh
+. .venv/bin/activate
+uv pip install --python .venv/bin/python 包名
+python script.py
+```
+
+每次 shell 调用分别激活，或直接调用 `.venv/bin/python`。服务器无须安装桌面或暴露浏览器调试端口。Compose 为浏览器提供 1 GiB 的共享内存，沿用现有 CPU、内存限制及 `init: true`。容器环境使用镜像中的 Linux Python，恢复时使用备份对应的镜像。
 
 ## 构建与启动
 

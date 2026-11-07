@@ -42,6 +42,8 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
+v0.6.0 提供每角色持久 uv／Python venv，以及可由 Python Playwright 控制的 Chromium。环境、脚本和浏览器 profile 随工作目录挂载保存，见 [部署说明](docs/deployment.md)。
+
 v0.5.5 每步只保留当前角色背景，旧背景通过 Harness 的公开会话接口退出模型输入，原始记录和完整快照持续保留。已推送的历史消息继续按 v0.5.4 的规则处理。详见 [发布说明](docs/releases/v0.5.5.md)。
 
 v0.5.0 增加每角色的预注入 Skill、GitHub Skill 导入和管理员 QQ 配置。真实身份在首次模型请求前准备，已处理事件持久确认，记忆后台整理与前台交流独立推进。配置及权限规则见 [角色 Skill、身份与管理员](docs/role-skills-and-authority.md)，变更见 [发布说明](docs/releases/v0.5.0.md)。

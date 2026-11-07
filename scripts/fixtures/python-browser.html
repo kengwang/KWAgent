@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>KWAgent Browser Check</title>
+<label>输入内容 <input id="message"></label>
+<button id="submit">提交</button>
+<p id="result"></p>
+<a id="download" href="download.txt" download>下载实际文件</a>
+<script>
+document.querySelector('#submit').addEventListener('click', () => {
+  const text = document.querySelector('#message').value;
+  document.querySelector('#result').textContent = text;
+  localStorage.setItem('message', text);
+  document.cookie = 'kwagent=browser-check; max-age=3600; path=/';
+});
+</script>
+</html>

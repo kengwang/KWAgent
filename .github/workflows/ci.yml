@@ -109,6 +109,8 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Run image without external network
         run: docker run --rm --network none --entrypoint node kwagent:ci scripts/verify-image.mjs
+      - name: Verify persistent Python and browser across container recreation
+        run: node scripts/verify-python-docker.mjs kwagent:ci
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0

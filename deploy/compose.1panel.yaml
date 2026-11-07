@@ -1,6 +1,6 @@
 services:
   kwagent:
-    image: ${KW_IMAGE:-ghcr.io/kengwang/kwagent:0.5.5}
+    image: ${KW_IMAGE:-ghcr.io/kengwang/kwagent:0.6.0}
     init: true
     restart: unless-stopped
     env_file:
@@ -21,6 +21,7 @@ services:
           - kwagent
     cpus: ${KW_CPU_LIMIT:-2}
     mem_limit: ${KW_MEMORY_LIMIT:-4g}
+    shm_size: 1gb
     stop_grace_period: 30s
     healthcheck:
       test: ['CMD', 'node', 'scripts/healthcheck.mjs']

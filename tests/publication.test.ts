@@ -7,5 +7,6 @@ test('发布清单拒绝凭据与运行文件并保留公开配置模板', () =>
   for (const path of paths) {
     assert.equal(privatePath(path), true, path);
   }
+  for (const path of ['.venv/pyvenv.cfg', 'browser-profile/Default/Cookies', 'browser-output/page.png', 'nested/__pycache__/module.pyc']) assert.equal(privatePath(path), true);
   for (const path of ['.env.example', 'Dockerfile', 'packages/core/src/config.ts', '.github/workflows/ci.yml', 'scripts/publication.mjs']) assert.equal(privatePath(path), false, path);
 });

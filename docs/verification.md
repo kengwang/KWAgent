@@ -1,5 +1,13 @@
 # 验收记录
 
+## v0.6.0
+
+本地 Linux amd64 镜像通过 `verify-image.mjs`：UID 10001、断网 Harness、真实 Python venv、Chromium 页面交互、中文截图、实际下载、SQLite、单实例和完整备份恢复全部通过。55 项自动测试、构建、类型检查及凭据检查通过。
+
+`verify-python-docker.mjs` 在第一个容器中用 uv 实际安装 `idna==3.11`，验证角色环境隔离与再次准备环境时保留额外依赖；第二个容器复用同一数据卷并关闭外网，成功导入该包，恢复浏览器 Cookie、localStorage、截图和下载文件，再次完成实际页面操作。日志位于忽略目录 `.artifacts/verification/python-image.log` 和 `python-runtime.log`。验收不调用模型或 QQ／空间发送。
+
+GitHub Actions 增加同样的容器重建检查，实际结果以对应标签的工作流和生产部署记录为准。
+
 ## v0.5.5
 
 `node scripts/verify-step-context.mjs` 在修复前于第二次实际模型请求失败，检测到两份完整步骤背景。修复后，真实 Harness 与模型完成初始化、三次连续输入及同一 Session 重启后的输入；五次请求均只包含一份当前背景，估算请求容量依次为 26814、27523、28069、28589、29111 Token。工具 Schema 始终为固定的 `run_code`，没有 QQ 或空间发送。结果保存在忽略目录 `.artifacts/verification/step-context.json`。

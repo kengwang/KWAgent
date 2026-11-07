@@ -1,11 +1,11 @@
 services:
   kwagent:
-    image: ${KW_IMAGE:-kwagent:0.5.5}
+    image: ${KW_IMAGE:-kwagent:0.6.0}
     build:
       context: .
       args:
         KW_COMMIT: ${KW_COMMIT:-unknown}
-        KW_VERSION: ${KW_VERSION:-0.5.5}
+        KW_VERSION: ${KW_VERSION:-0.6.0}
         NODE_IMAGE: ${KW_NODE_IMAGE:-node:24.18.0-bookworm-slim}
         HTTP_PROXY: ${KW_BUILD_PROXY:-}
         HTTPS_PROXY: ${KW_BUILD_PROXY:-}
@@ -29,6 +29,7 @@ services:
       - '${KW_DATA_ROOT:-./data}:/data'
     cpus: ${KW_CPU_LIMIT:-2}
     mem_limit: ${KW_MEMORY_LIMIT:-4g}
+    shm_size: 1gb
     stop_grace_period: 30s
     healthcheck:
       test: ['CMD', 'node', 'scripts/healthcheck.mjs']
