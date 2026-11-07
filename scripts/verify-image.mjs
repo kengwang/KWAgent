@@ -42,6 +42,10 @@ try {
   assert.equal(admin('doctor').database, 'ok');
   const reasoning = admin('model.reasoning', { provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash' });
   assert.ok(reasoning.efforts.some(effort => effort.id === 'high'));
+  const catalog = admin('model.catalog', { limit: 200 });
+  assert.ok(catalog.items.some(model => model.provider === 'kw-chat' && model.id === 'cn:deepseek-v4.1-flash'));
+  const reference = admin('model.save', { id: 'offline-chat-reference', name: '已有 Harness 模型', kind: 'chat', harnessProvider: 'kw-chat', model: 'cn:deepseek-v4.1-flash', reasoningEffort: 'low', expectedRevision: null });
+  assert.equal(reference.provider, 'kw-chat'); assert.equal(reference.credentialConfigured, null); assert.equal(reference.baseUrl, '');
   const configured = admin('role.create', { id: 'image-reasoning', accountId: 'main', name: '推理等级检查', initialPersona: '仅用于断网配置检查。', provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash', reasoningEffort: 'high', state: 'paused', groups: [20001], adminQQs: [10001] });
   assert.deepEqual(admin('task.list', { roleId: configured.id }), { items: [], nextCursor: null });
   const changed = admin('role.update', { id: configured.id, expectedRevision: configured.revision, patch: { reasoningEffort: 'off' } });

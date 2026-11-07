@@ -20,6 +20,12 @@ export function RoleForm({ initial, config, busy, call, revision, onCancel, onSa
   const [reasoningEffort, setReasoningEffort] = useState(initial?.reasoningEffort ?? '');
   const [reasoning, setReasoning] = useState<{ efforts: { id: string; name: string }[]; defaultEffort: string | null } | null>(null);
   const [reasoningError, setReasoningError] = useState('');
+  const [presetReasoning, setPresetReasoning] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true; setPresetReasoning(null);
+    if (presets.chat) void call('model.read', { id: presets.chat }).then(value => { if (live) { const preset = value as { reasoningEffort: string | null; provider: string; model: string }; setPresetReasoning(preset.reasoningEffort); setProvider(preset.provider); setModel(preset.model); } }).catch(() => {});
+    return () => { live = false; };
+  }, [presets.chat, revision]);
   useEffect(() => {
     let live = true; setReasoning(null); setReasoningError('');
     const timer = setTimeout(() => {
@@ -56,7 +62,7 @@ export function RoleForm({ initial, config, busy, call, revision, onCancel, onSa
     <RoleModelPresets call={call} revision={revision} values={presets} onSelect={(kind, id, preset) => { setPresets(previous => ({ ...previous, [kind]: id })); if (kind === 'chat' && preset?.provider) { setProvider(preset.provider); setModel(preset.model); } }} />
     {!presets.chat && <><label>模型提供者<input required value={provider} onChange={event => setProvider(event.target.value)} /></label><label>模型<input required value={model} onChange={event => setModel(event.target.value)} /></label></>}
     <label>对话推理等级<select aria-label="对话推理等级" value={reasoningEffort} disabled={busy || !reasoning} onChange={event => setReasoningEffort(event.target.value)}>
-      <option value="">跟随提供商默认值{reasoning?.defaultEffort ? `（${reasoning.defaultEffort}）` : ''}</option>
+      <option value="">{presetReasoning ? `跟随聊天预设（${presetReasoning}）` : `跟随提供商默认值${reasoning?.defaultEffort ? `（${reasoning.defaultEffort}）` : ''}`}</option>
       {reasoning?.efforts.map(effort => <option key={effort.id} value={effort.id}>{effort.name}（{effort.id}）</option>)}
       {reasoningEffort && !reasoning?.efforts.some(effort => effort.id === reasoningEffort) && <option value={reasoningEffort}>{reasoningEffort}（当前模型未声明）</option>}
     </select></label>

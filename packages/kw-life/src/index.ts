@@ -182,11 +182,11 @@ export class Life extends Service {
     const role = this.store.updateRole(id, { ...patch, ...patch.chatPresetId ? { provider: effective.provider, model: effective.model } : {}, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
     if (role.state !== previous.state) await this.control(id, role.state, false);
     const agent = this.handles.get(id)?.agent;
-    if (agent && (role.provider !== previous.provider || role.model !== previous.model || 'reasoningEffort' in patch || 'chatPresetId' in patch)) agent.model.select(roleModel(this.ctx.kwMind.models.effective(role)));
+    if (agent && (role.provider !== previous.provider || role.model !== previous.model || 'reasoningEffort' in patch || 'chatPresetId' in patch)) agent.model.select(roleModel(this.ctx.kwMind.models.selection(role)));
     return this.store.role(id);
   }
   refreshPresetModels(id: string): void {
-    for (const role of this.store.roles()) if (role.chatPresetId === id) this.handles.get(role.id)?.agent.model.select(roleModel(this.ctx.kwMind.models.effective(role)));
+    for (const role of this.store.roles()) if (role.chatPresetId === id) this.handles.get(role.id)?.agent.model.select(roleModel(this.ctx.kwMind.models.selection(role)));
   }
   async control(roleId: string, state: Role['state'], save = true): Promise<Role> {
     this.lifecycle.assertAvailable(roleId);
@@ -235,7 +235,7 @@ export class Life extends Service {
   async prepareEmptySession(role: Role): Promise<void> {
     if (await this.ctx.sessionPersistence.stat(SessionId(role.sessionId))) return;
     const cwd = join(this.config.dataRoot, 'workspaces', role.id); await mkdir(cwd, { recursive: true });
-    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: roleModel(this.ctx.kwMind.models.effective(role)) });
+    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: roleModel(this.ctx.kwMind.models.selection(role)) });
     try { await this.sessions.flush(handle.agent.session); } finally { await handle.dispose(); }
   }
   async retireRole(roleId: string): Promise<void> {
@@ -396,13 +396,13 @@ export class Life extends Service {
       if (this.store.role(roleId).state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
     };
     const exists = await this.ctx.sessionPersistence.stat(SessionId(role.sessionId));
-    const agentOptions = roleModel(role);
+    const agentOptions = roleModel(this.ctx.kwMind.models.selection(role));
     const handle = exists
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'kwagent' }, agentOptions, setup });
     this.handles.set(roleId, handle);
     const currentRole = this.ctx.kwMind.models.effective(this.store.role(roleId));
-    if (currentRole.provider !== role.provider || currentRole.model !== role.model || currentRole.reasoningEffort !== role.reasoningEffort || currentRole.reasoningEffort !== null) handle.agent.model.select(roleModel(currentRole));
+    if (currentRole.provider !== role.provider || currentRole.model !== role.model || currentRole.reasoningEffort !== role.reasoningEffort || currentRole.reasoningEffort !== null || currentRole.chatPresetId) handle.agent.model.select(roleModel(this.ctx.kwMind.models.selection(currentRole)));
     if (currentRole.state !== 'active' || this.maintenance) await this.extensions.suspend(roleId);
     const recovered = await this.ctx.sessionQuery.readSession(SessionId(role.sessionId));
     this.activities.restore(roleId, recovered.events);
