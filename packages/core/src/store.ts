@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { z } from 'zod';
+import { executionOrigin } from './execution.ts';
 import {
   asJson, ConflictError, EvidenceError, PersistenceError, eventSchema, extensionSchema, memorySchema, now,
   operationSchema, planSchema, roleInputSchema, roleSchema, mediaSchema,
@@ -135,7 +136,8 @@ export class Store {
       this.db.prepare('INSERT INTO documents VALUES(?,?,?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET role_id=excluded.role_id,revision=excluded.revision,body=excluded.body,updated_at=excluded.updated_at')
         .run(kind, id, roleId, revision, body, now());
       this.db.prepare('INSERT INTO revisions(entity,id,revision,actor,reason,body,time) VALUES(?,?,?,?,?,?,?)').run(kind, id, revision, actor, reason, body, now());
-      const activity = roleId && actor === roleId ? this.meta(`activity:${roleId}`) : undefined;
+      const origin = executionOrigin.getStore();
+      const activity = roleId && actor === roleId ? origin?.roleId === roleId ? origin.activityId : this.meta(`activity:${roleId}`) : undefined;
       if (activity && ['role', 'memory', 'plan', 'operation'].includes(kind)) this.link(activity, kind, `${id}:${revision}`, { id, revision });
       this.touch();
     });

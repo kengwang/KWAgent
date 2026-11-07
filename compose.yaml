@@ -1,11 +1,11 @@
 services:
   kwagent:
-    image: ${KW_IMAGE:-kwagent:0.6.2}
+    image: ${KW_IMAGE:-kwagent:0.7.0}
     build:
       context: .
       args:
         KW_COMMIT: ${KW_COMMIT:-unknown}
-        KW_VERSION: ${KW_VERSION:-0.6.2}
+        KW_VERSION: ${KW_VERSION:-0.7.0}
         NODE_IMAGE: ${KW_NODE_IMAGE:-node:24.18.0-bookworm-slim}
         HTTP_PROXY: ${KW_BUILD_PROXY:-}
         HTTPS_PROXY: ${KW_BUILD_PROXY:-}

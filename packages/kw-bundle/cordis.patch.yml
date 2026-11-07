@@ -10,6 +10,10 @@
   disabled: true
 - id: tool-executor-ptc
   disabled: false
+- id: ptc-runtime
+  config:
+    executionMode: per-call
+    scriptPersistence: false
 - id: llm-pi-ai
   config:
     providers:

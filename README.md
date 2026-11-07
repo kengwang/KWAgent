@@ -44,6 +44,8 @@ node scripts/verify-docker.mjs kwagent:verification
 
 v0.6.2 在角色编辑页提供独立的对话推理等级，显示所选模型实际支持的档位，支持恢复提供商默认值、运行中修改及重启恢复。
 
+v0.7.0 支持整段 `run_code` 异步执行：显式选择后台或等待五秒自动转换。结果作为新的持久事件送达，角色可以先继续交流。活动页面提供任务详情和取消入口，暂停角色同时取消任务。
+
 v0.6.1 提供所有角色共用的持久 uv／Python venv，以及可由 Python Playwright 控制的 Chromium。共享环境、各自工作目录和浏览器 profile 均可挂载保存，见 [部署说明](docs/deployment.md)。
 
 v0.5.5 每步只保留当前角色背景，旧背景通过 Harness 的公开会话接口退出模型输入，原始记录和完整快照持续保留。已推送的历史消息继续按 v0.5.4 的规则处理。详见 [发布说明](docs/releases/v0.5.5.md)。

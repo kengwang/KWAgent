@@ -43,6 +43,7 @@ try {
   const reasoning = admin('model.reasoning', { provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash' });
   assert.ok(reasoning.efforts.some(effort => effort.id === 'high'));
   const configured = admin('role.create', { id: 'image-reasoning', accountId: 'main', name: '推理等级检查', initialPersona: '仅用于断网配置检查。', provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash', reasoningEffort: 'high', state: 'paused', groups: [20001], adminQQs: [10001] });
+  assert.deepEqual(admin('task.list', { roleId: configured.id }), { items: [], nextCursor: null });
   const changed = admin('role.update', { id: configured.id, expectedRevision: configured.revision, patch: { reasoningEffort: 'off' } });
   assert.equal(changed.reasoningEffort, 'off'); assert.equal(changed.state, 'paused'); assert.deepEqual(changed.groups, [20001]); assert.deepEqual(changed.adminQQs, [10001]);
   const invalidEffort = spawnSync(process.execPath, ['scripts/admin.mjs', 'role.update', JSON.stringify({ id: configured.id, expectedRevision: changed.revision, patch: { reasoningEffort: 'unsupported-kw-effort' } })], { encoding: 'utf8', timeout: 10000 });

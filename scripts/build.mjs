@@ -16,7 +16,7 @@ for (const name of readdirSync(join(root, 'packages'))) {
   if (!existsSync(join(sourceRoot, 'index.js'))) continue;
   const destination = join(root, 'packages', name, 'lib');
   mkdirSync(join(destination, 'types'), { recursive: true });
-  const entries = ['index', 'compaction', 'remote', 'typert'].map(name => join(sourceRoot, `${name}.js`)).filter(existsSync);
+  const entries = ['index', 'compaction', 'remote', 'typert', 'jobs'].map(name => join(sourceRoot, `${name}.js`)).filter(existsSync);
   await build({ entryPoints: entries, outdir: destination, bundle: true, packages: 'external', platform: 'node', target: 'node24', format: 'esm', sourcemap: true });
   for (const file of readdirSync(sourceRoot, { recursive: true })) {
     if (typeof file === 'string' && file.endsWith('.d.ts')) {

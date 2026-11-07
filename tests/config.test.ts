@@ -13,6 +13,9 @@ test('部署配置检查成对的模型字段和时区，公开状态脱敏', ()
   assert.equal(redact('local-secret milky-secret Bearer other-secret', config), '[REDACTED] [REDACTED] Bearer [REDACTED]');
   assert.throws(() => loadConfig({ KW_VISION_BASE_URL: 'https://example.com/v1' }), /同时配置/);
   assert.throws(() => loadConfig({ KW_TIME_ZONE: 'not-a-timezone' }));
+  assert.equal(config.asyncForegroundWaitMs, 5000);
+  assert.equal(loadConfig({ KW_ASYNC_FOREGROUND_WAIT_MS: '15000' }).asyncForegroundWaitMs, 15000);
+  assert.throws(() => loadConfig({ KW_ASYNC_FOREGROUND_WAIT_MS: '0' }));
 });
 test('运行版本与全部生产包元数据一致，连续性预算明确校验', () => {
   const read = (path: string) => JSON.parse(readFileSync(path, 'utf8'));

@@ -34,6 +34,7 @@ import { RoleLifecycle } from './lifecycle.ts';
 import { readPreinjectSkills } from './preinject.ts';
 import { RoleSkills } from './skills.ts';
 import { RolePolicy } from './policy.ts';
+import { Tasks, taskSchema } from './tasks.ts';
 import { retireStepContexts } from './step-context.ts';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import { workspaceDomainState } from '@deepseek-ai/dsh-workspace';
@@ -60,6 +61,7 @@ export class Life extends Service {
   readonly extensions: Extensions;
   readonly operations: Operations;
   readonly activities: Activities;
+  readonly tasks: Tasks;
   readonly lifecycle: RoleLifecycle;
   readonly roleSkills: RoleSkills;
   readonly policy: RolePolicy;
@@ -100,6 +102,7 @@ export class Life extends Service {
     this.extensions = new Extensions(ctx.kwMind.store, ctx.kwMind.config.dataRoot, ctx);
     this.operations = new Operations(this);
     this.activities = new Activities(this.store);
+    this.tasks = new Tasks(this);
     this.lifecycle = new RoleLifecycle(this);
     this.roleSkills = new RoleSkills(ctx, this.store, this.config.dataRoot);
     this.policy = new RolePolicy(this.store);
@@ -121,6 +124,7 @@ export class Life extends Service {
     if (this.started) return;
     await (this.presetTask ??= registerRolePreset(this.ctx));
     await this.ctx.kwLagrange.start();
+    await this.tasks.recover();
     this.started = true;
     this.startupError = null;
     this.extensions.recoverProfile();
@@ -196,6 +200,7 @@ export class Life extends Service {
       const agent = this.handles.get(roleId)?.agent;
       if (agent?.status === 'running') this.store.setMeta(`wake:${roleId}`, 'pending');
       agent?.cancel({ kind: 'hook', reason: `角色${state}` }, { keepInbox: true });
+      await this.tasks.cancelRole(roleId, `角色${state}`);
       await this.dispatchWork.get(roleId);
       await this.backgroundWork.get(roleId);
       await this.plans.pause(roleId);
@@ -231,6 +236,7 @@ export class Life extends Service {
   async retireRole(roleId: string): Promise<void> {
     const timer = this.timers.get(roleId); if (timer) clearTimeout(timer); this.timers.delete(roleId);
     this.dispatchAbort.get(roleId)?.abort(); this.stopping.get(roleId)?.abort();
+    await this.tasks.cancelRole(roleId, '角色会话管理');
     await this.backgroundWork.get(roleId);
     await this.creating.get(roleId);
     const handle = this.handles.get(roleId);
@@ -303,6 +309,7 @@ export class Life extends Service {
         const sceneEvents = payload.messages.flatMap(message => message.source.kind === 'kw-event' ? message.source.eventIds.map(id => this.store.event(id)) : []);
         let scene = sceneEvents.length ? this.sceneFor(sceneEvents) : payload.messages.length ? this.sceneFor([]) : this.scenes.get(roleId) ?? this.sceneFor([]);
         for (const message of payload.messages) {
+          if (message.source.kind === 'kw-event' && message.source.eventIds.length && message.source.eventIds.every(id => { const event = this.store.event(id); return event.type === 'background-result' && this.store.deliveryStatus(id).state === 'completed'; })) continue;
           if (String(message.source.kind) === 'schedule') {
             const text = message.content.filter(block => block.type === 'text').map(block => block.text).join('\n');
             const notices = scheduleNotices(text);
@@ -370,9 +377,13 @@ export class Life extends Service {
         if (event.type === 'agent/inbox/spliced') queueMicrotask(() => { if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) this.stopping.get(roleId)?.abort(); });
         this.activities.event(roleId, role.sessionId, event);
         if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${role.sessionId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
-        if (event.type === 'job/settled') {
-          const experience = this.store.appendEvent({ id: `job:${roleId}:${event.data.jobId}:settled`, accountId: role.accountId, roleId, source: 'system', type: 'background-complete', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: false, payload: asJson(event.data) });
-          if (experience.inserted) this.enqueue(roleId);
+        if (event.type === 'tool/result') this.track(this.tasks.consume(roleId, String(event.data.message.toolCallId), !event.data.message.isError), roleId);
+        if (event.type === 'user/message' && event.data.source.kind === 'kw-event') for (const id of event.data.source.eventIds) {
+          const input = this.store.event(id);
+          if (input.type === 'background-result' && input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) && typeof input.payload.taskId === 'string') {
+            const task = this.tasks.read(roleId, input.payload.taskId);
+            if (task.callId) this.track(this.tasks.consume(roleId, task.callId, task.state === 'completed', true), roleId);
+          }
         }
         } catch (error) { this.fail(error, roleId); throw error; }
       });
@@ -467,6 +478,7 @@ export class Life extends Service {
       if (!events.length) return;
       for (let index = events.length - 1; index >= 0; index--) {
         const event = events[index]!;
+        if (event.type === 'background-result' && event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) && typeof event.payload.taskId === 'string' && this.tasks.awaitingRead(event.payload.taskId)) { events.splice(index, 1); continue; }
         if (event.type !== 'deferred-input' || typeof event.payload !== 'object' || event.payload === null || !('content' in event.payload)) continue;
         const input = z.object({ id: z.string(), source: z.object({ kind: z.string() }), content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()) }).parse(event.payload);
         if (input.source.kind !== 'schedule') continue;
@@ -484,9 +496,10 @@ export class Life extends Service {
       if (alreadyInSession) { this.store.delivery(ids, messageId, 'delivered'); return; }
       const frame = await preparePerception(this.store, this.ctx.kwMind.payloads, roleId, events, messageId, this.config.budgets.perception, controller.signal);
       this.store.delivery(ids, messageId, 'prepared');
+      const attachments = (await Promise.all(events.map(event => event.type === 'background-result' && event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) && typeof event.payload.taskId === 'string' ? this.tasks.deferred(roleId, event.payload.taskId, controller.signal) : Promise.resolve([])))).flat();
       const message: UserMessage = {
           id: MessageId(messageId), role: 'user', source: { kind: 'kw-event', roleId, eventIds: ids },
-          content: [{ type: 'text', text: JSON.stringify(frame) }],
+          content: [{ type: 'text', text: JSON.stringify(frame) }, ...attachments],
       };
       handle.agent.steer(message);
       await this.ctx.sessions.flush(handle.agent.session);
@@ -502,7 +515,8 @@ export class Life extends Service {
     return event;
   }
   private sceneFor(events: Experience[]): ContinuityScene {
-    return { eventIds: events.map(event => event.id), people: [...new Set(events.flatMap(event => event.senderId ? [String(event.senderId)] : event.scene === 'private' && event.peerId ? [String(event.peerId)] : []))], contexts: [...new Map(events.flatMap(event => event.scene && event.peerId && ['group', 'private'].includes(event.scene) ? [[`${event.scene}:${event.peerId}`, { scene: event.scene as 'group' | 'private', peerId: event.peerId }] as const] : [])).values()], planIds: [], recordIds: [], query: events.map(event => JSON.stringify(readable(event.payload))).join('\n').slice(0, 4000) };
+    const taskPeople = events.filter(event => event.source === 'system' && event.type === 'background-result').flatMap(event => z.object({ people: z.array(z.string()).default([]) }).parse(event.payload).people);
+    return { eventIds: events.map(event => event.id), people: [...new Set([...taskPeople, ...events.flatMap(event => event.senderId ? [String(event.senderId)] : event.scene === 'private' && event.peerId ? [String(event.peerId)] : [])])], contexts: [...new Map(events.flatMap(event => event.scene && event.peerId && ['group', 'private'].includes(event.scene) ? [[`${event.scene}:${event.peerId}`, { scene: event.scene as 'group' | 'private', peerId: event.peerId }] as const] : [])).values()], planIds: [], recordIds: [], query: events.map(event => JSON.stringify(readable(event.payload))).join('\n').slice(0, 4000) };
   }
   quiesce(): Promise<void> {
     this.maintenance = true;
@@ -520,6 +534,7 @@ export class Life extends Service {
     for (const controller of this.dispatchAbort.values()) controller.abort();
     await Promise.allSettled([...this.dispatchWork.values()]);
     for (const role of this.store.roles()) {
+      await this.tasks.cancelRole(role.id, '服务器维护');
       for (const job of this.jobs.list(SessionId(role.sessionId))) if (job.owner === role.sessionId && ['running', 'stopping'].includes(job.status)) this.jobs.kill(job.id, SessionId(role.sessionId), '服务器维护');
     }
     for (const [roleId, handle] of this.handles) { if (handle.agent.status === 'running') this.store.setMeta(`wake:${roleId}`, 'pending'); handle.agent.cancel({ kind: 'hook', reason: '服务器维护' }, { keepInbox: true }); }
@@ -531,9 +546,9 @@ export class Life extends Service {
     const preview = <T>(items: T[]) => items.slice(0, 50).map(item => summary(item, this.config.budgets.panelBodyBytes));
     const value = { revision: this.store.revision(), rolesGeneration: Number(this.store.meta('roles-generation') ?? 0), version: APP_VERSION, maintenance: this.maintenance, started: this.started, startupError: this.startupError,
       roles: preview(this.store.roles().sort((a, b) => Number(b.id === roleId) - Number(a.id === roleId)).map(role => ({ ...role, memoryStatus: this.ctx.kwMind.consolidationStatus(role.id), runtime: this.runtime.get(role.id) ?? { state: role.state, error: null, lastActivityAt: null }, usage: this.store.usage(role.id, this.day()) }))),
-      activities: preview(this.store.list('activity', activitySchema, roleId, 50)), events: preview(this.store.events(roleId, 50).map(event => ({ ...event, delivery: this.store.deliveryStatus(event.id) }))), memories: preview(roleId ? this.store.memories(roleId, 50) : []), plans: preview(this.store.plans(roleId)), operations: preview(this.store.operations(roleId, 50)),
+      activities: preview(this.store.list('activity', activitySchema, roleId, 50)), tasks: preview(this.store.list('async-task', taskSchema, roleId, 50)), events: preview(this.store.events(roleId, 50).map(event => ({ ...event, delivery: this.store.deliveryStatus(event.id) }))), memories: preview(roleId ? this.store.memories(roleId, 50) : []), plans: preview(this.store.plans(roleId)), operations: preview(this.store.operations(roleId, 50)),
       extensions: preview(this.store.extensions(roleId)), connections: { mcp: this.ctx.kwLagrange.client.status, events: this.ctx.kwLagrange.events.status }, config: publicConfig(this.config), truncated: false };
-    const lists: unknown[][] = [value.roles, value.activities, value.events, value.memories, value.plans, value.operations, value.extensions];
+    const lists: unknown[][] = [value.roles, value.activities, value.tasks, value.events, value.memories, value.plans, value.operations, value.extensions];
     while (Buffer.byteLength(JSON.stringify(value)) > this.config.budgets.snapshotBytes) {
       const largest = [...lists].sort((a, b) => Buffer.byteLength(JSON.stringify(b)) - Buffer.byteLength(JSON.stringify(a)))[0]!;
       if (!largest.length) throw new Error('Panel 必需状态超过快照容量'); largest.pop(); value.truncated = true;
@@ -553,7 +568,7 @@ export class Life extends Service {
 }
 
 export const name = 'kw-life';
-export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'skills', 'schedule', 'jobs', 'hmr', 'profileContext', 'pluginPackages', 'workspaceRegistry', 'appReady', 'appExit'];
+export const inject = ['kwMind', 'kwLagrange', 'llm', 'agents', 'agentPresets', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'systemPrompt', 'skills', 'schedule', 'jobs', 'ptcRuntime', 'hmr', 'profileContext', 'pluginPackages', 'workspaceRegistry', 'appReady', 'appExit'];
 export async function apply(ctx: Context): Promise<void> {
   const skillPath = fileURLToPath(new URL('../skills/kwagent-life/SKILL.md', import.meta.url));
   ctx.skills.register({ name: 'kwagent-life', description: 'KWAgent 初始化、实时交流、记忆与连续性参数、来源及生活安排。初始化和使用内部工具时读取。', content: await readFile(skillPath, 'utf8'), source: 'runtime', path: skillPath, resourceBase: { kind: 'directory', path: fileURLToPath(new URL('../skills/kwagent-life/', import.meta.url)) } });

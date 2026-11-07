@@ -32,6 +32,13 @@ export function EventHistory({ roleId, revision, call, open, unassigned }: { rol
   </article>)}{page.nextCursor !== null && <Button onClick={page.more}>读取更早经历</Button>}</section>;
 }
 interface Activity { id: string; roleId: string; turn: number; state: string; startedAt: string; endedAt: string | null; accepted: number; steps: number; sends: { succeeded: number; failed: number; unknown: number } }
+interface AsyncTask { id: string; roleId: string; label: string; state: string; mode: string; createdAt: string; finishedAt: string | null; notification: string; activityId: string | null }
+export function TaskList({ roleId, revision, call, open }: { roleId: string; revision: number; call: Call; open: Open }) {
+  const page = usePages<AsyncTask>('task.list', { roleId }, item => item.id, revision, call, Boolean(roleId));
+  const taskLabels: Record<string, string> = { starting: '正在启动', running: '正在执行', stopping: '正在取消', completed: '程序已结束', failed: '执行失败', cancelled: '已取消', interrupted: '进程中断' };
+  const notificationLabels: Record<string, string> = { pending: '等待送达', prepared: '准备投递', queued: '等待接纳', accepted: '已经接纳', completed: '已经处理', 'not-required': '通过前台返回' };
+  return <section aria-label="后台任务"><h3>后台任务</h3>{!roleId ? <p>选择角色后查看任务。</p> : <><PageNotice page={page} />{!page.items.length && <p className="kw-empty">当前没有任务记录。</p>}{page.items.map(task => <article className="kw-entry" key={task.id}><div className="kw-entry-head"><strong>{task.label}</strong><span style={{ whiteSpace: 'nowrap' }}>{taskLabels[task.state]}</span></div><p>{task.mode === 'foreground' ? task.finishedAt ? '前台返回' : '前台等待' : '后台执行'} · {Math.max(0, Math.round((Date.parse(task.finishedAt ?? new Date().toISOString()) - Date.parse(task.createdAt)) / 1000))} 秒 · 通知：{notificationLabels[task.notification] ?? task.notification}</p><div className="kw-actions"><Button size="sm" onClick={() => open('task.read', { roleId, id: task.id })}>读取任务详情</Button>{task.activityId && <Button size="sm" onClick={() => open('activity.read', { roleId, id: task.activityId })}>发起活动</Button>}{['starting', 'running', 'stopping'].includes(task.state) && <Button size="sm" disabled={task.state === 'stopping'} onClick={() => { void call('task.cancel', { roleId, id: task.id }).catch(() => {}); }}>取消任务</Button>}</div></article>)}{page.nextCursor !== null && <Button onClick={page.more}>读取更多任务</Button>}</>}</section>;
+}
 const labels: Record<string, string> = { running: '正在活动', completed: '已完成', aborted: '已中断', interrupted: '进程中断', error: '活动失败', blocked: '活动受阻', 'max-tokens': '输出达到上限', source: '原始经历', input: '已接纳输入', perception: '感知批次', context: '步骤上下文', step: '模型步骤', 'step-end': '步骤结束', tool: '工具调用', receipt: '发送或操作回执', memory: '记忆修订', role: '人格修订', plan: '后续安排', operation: '操作记录', session: 'Session 记录' };
 
 export function Timeline({ roleId, revision, call, open }: { roleId: string; revision: number; call: Call; open: Open }) {
@@ -78,6 +85,7 @@ export function DetailReader({ detail, roleId, call, onOpen }: { detail: Detail;
     else if (item.kind === 'operation') onOpen('source.read', { roleId, id: info.id });
     else if (item.kind === 'tool' && info.result?.sourceId) onOpen('source.read', { roleId, id: info.result.sourceId });
     else if (item.kind === 'perception') onOpen('perception.read', { roleId, messageId: id });
+    else if (item.kind === 'task' || item.kind === 'task-result') onOpen('task.read', { roleId, id });
     else if (item.kind === 'memory') onOpen('memory.detail', { roleId, id: info.id });
     else if (item.roleId && item.content && item.id) onOpen('memory.detail', { roleId: item.roleId, id: item.id });
     else if (item.kind === 'role') onOpen('history', { entity: 'role', id: info.id });

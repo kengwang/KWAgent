@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { asJson, now, type Json, type Store } from '@kwagent/core';
+import { asJson, now, executionOrigin, type Json, type Store } from '@kwagent/core';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
 export const activitySchema = z.object({ id: z.string(), roleId: z.string(), sessionId: z.string(), turn: z.number(), startSeq: z.number(), startedAt: z.string(), endedAt: z.string().nullable(), state: z.string(), revision: z.number(), accepted: z.number(), steps: z.number(), sends: z.object({ succeeded: z.number(), failed: z.number(), unknown: z.number() }) });
@@ -22,6 +22,7 @@ export class Activities {
     for (const key of this.nestedRoots) if (key.startsWith(`${roleId}:`)) this.nestedRoots.delete(key);
   }
   current(roleId: string): Activity | undefined { const id = this.store.meta(`activity:${roleId}`); return id ? this.store.get('activity', id, activitySchema) : undefined; }
+  finishRoot(roleId: string, rootCallId: string): void { this.nestedRoots.delete(`${roleId}:${rootCallId}`); }
   restore(roleId: string, events: readonly SessionEvent[]): void {
     const accepted = new Set<string>(); let responded: string | undefined; let completed = 0;
     for (const event of events) {
@@ -59,6 +60,8 @@ export class Activities {
         for (const id of event.data.source.eventIds) {
           this.store.db.prepare('UPDATE events SET activity_id=? WHERE id=? AND role_id=?').run(activity.id, id, roleId);
           this.store.link(activity.id, 'source', id);
+          const input = this.store.event(id);
+          if (input.type === 'background-result' && input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload) && typeof input.payload.taskId === 'string') this.store.link(activity.id, 'task-result', input.payload.taskId, { sourceId: id });
         }
       } else {
         const wake = this.store.appendEvent({ id: `wake:${roleId}:${event.data.id}`, accountId: this.store.role(roleId).accountId, roleId, source: String(event.data.source.kind) === 'schedule' ? 'schedule' : 'system', type: 'accepted-wake', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson({ messageId: event.data.id, source: event.data.source }) }).event;
@@ -78,7 +81,8 @@ export class Activities {
     }
   }
   tool(roleId: string, executionId: string, callId: string, rootCallId: string, name: string, result: Json): void {
-    const activity = this.current(roleId); if (!activity) return;
+    const origin = executionOrigin.getStore();
+    const activity = origin?.roleId === roleId ? origin.activityId ? this.store.get('activity', origin.activityId, activitySchema) : undefined : this.current(roleId); if (!activity) return;
     this.store.link(activity.id, 'tool', executionId, { callId, rootCallId, name, at: now(), result });
     const operations = this.store.db.prepare("SELECT body FROM documents WHERE kind='operation' AND role_id=? AND json_extract(body,'$.executionId')=?").all(roleId, executionId);
     for (const row of operations) {
