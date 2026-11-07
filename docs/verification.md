@@ -1,5 +1,19 @@
 # 验收记录
 
+## v0.8.4
+
+65 项自动测试通过，新增真实 SQLite 的全局方案共享验证：两个角色引用同一条无角色归属的方案记录，各自的思考等级互不覆盖，被任一角色使用时不能删除方案。真实 Session 和磁盘对象检查背景增量、稳定前缀、内容复用、取消前未投递、重启恢复及可见基线移除后的重新建立。
+
+真实浏览器检查独立全局入口、两个角色选择同一方案、全局修改后的继承与覆盖，以及全局和角色草稿跨页面保留。桌面、420 像素窄屏和重连检查通过，无横向溢出。实际数据库复查确认方案仅有一条记录、两个角色保持暂停，未调用模型或发送社交测试消息。结果位于 `.artifacts/verification/global-model-selection.json` 和 `.artifacts/verification/global-models-browser.log`。
+
+生产用量通过实际 Session 的供应商回执核对，缓存读取包含在 Harness `totalTokens` 中。界面明确显示总处理量及辅助请求范围；金额依据实际供应商账单，不将处理总量转换为收费金额。
+
+真实 Harness 与官方 `deepseek-flash` 在 `high` 思考等级下完成五次独立的实际文件写入，已发送的模型历史保持追加。首次背景为 28,458 字节，后续每步 328–444 字节；热身后样本缓存读取 145,280 Token，未缓存输入 1,890 Token，输入缓存命中率约 98.7%。报告位于 `.artifacts/verification/context-cache.json`，没有模拟供应商用量。
+
+停止并重新启动实际进程后，继续通过原 Session 接纳新输入，背景仍使用增量，五个文件操作未重放。该请求实际缓存读取 37,504 Token、未缓存输入 978 Token。记录位于 `.artifacts/verification/cache-process-restart.log`。
+
+完整异步回归和实际模型自动通知验收通过：程序只执行一次、完成通知只接纳一次、任务查询为零，暂停、取消、Session 重置、强制终止后不重放、图片和大结果读取、完整备份恢复继续正常。报告位于 `.artifacts/verification/async.json` 与 `.artifacts/verification/async-notification.json`，未进行社交发送测试。
+
 ## v0.8.3
 
 61 项自动测试通过，覆盖聊天引用的严格输入、连接与凭据隔离，以及实际 SQLite 中预设思考等级继承、角色覆盖和旧配置读取。

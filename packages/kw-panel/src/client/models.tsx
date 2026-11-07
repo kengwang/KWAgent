@@ -4,18 +4,18 @@ import type { HarnessModel, ModelPreset, ModelPresetWrite, PublicModelPreset } f
 import { PageNotice, usePages, type Call } from './views.tsx';
 
 const kindLabels = { chat: '聊天', vision: '视觉', image: '生图与编辑' };
-export function ModelPresetsView({ revision, call }: { revision: number; call: Call }) {
+export function ModelPresetsView({ revision, call, active = true }: { revision: number; call: Call; active?: boolean }) {
   const [kind, setKind] = useState('');
-  const page = usePages<PublicModelPreset>('model.list', kind ? { kind } : {}, item => item.id, revision, call);
+  const page = usePages<PublicModelPreset>('model.list', kind ? { kind } : {}, item => item.id, revision, call, active);
   const [editing, setEditing] = useState<PublicModelPreset | 'new' | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   return <section aria-label="模型预设">
-    <div className="kw-section-head"><h3>模型预设</h3><Button onClick={() => { setEditing('new'); setNotice(''); }}>新建预设</Button></div>
-    <p className="kw-prose">聊天预设选择 Harness 已配置的模型，思考等级可以单独设置。视觉和生图预设填写各自的接口，保存后在角色中选择。</p>
+    <div className="kw-section-head"><h3>共享模型方案</h3><Button onClick={() => { setEditing('new'); setNotice(''); }}>新建预设</Button></div>
+    <p className="kw-prose">这里管理全部角色共享的模型方案。聊天方案选择 Harness 已配置的模型和默认思考等级，视觉及生图方案填写独立接口。角色通过下拉框引用同一份配置。</p>
     {notice && <p role="status">{notice}</p>}
-    {editing && <ModelPresetForm key={editing === 'new' ? 'new' : editing.id} initial={editing === 'new' ? undefined : editing} current={editing === 'new' ? undefined : page.items.find(item => item.id === editing.id)} call={call} onCancel={() => setEditing(null)} onSaved={name => { setEditing(null); setNotice(`已保存“${name}”，角色可以选择这个预设。`); page.refresh(); }} />}
+    {editing && <ModelPresetForm active={active} key={editing === 'new' ? 'new' : editing.id} initial={editing === 'new' ? undefined : editing} current={editing === 'new' ? undefined : page.items.find(item => item.id === editing.id)} call={call} onCancel={() => setEditing(null)} onSaved={name => { setEditing(null); setNotice(`已保存全局方案“${name}”，所有角色均可选择。`); page.refresh(); }} />}
     <label className="kw-model-filter">筛选用途<select value={kind} onChange={event => setKind(event.target.value)}><option value="">全部预设</option>{Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
     <PageNotice page={page} />
     {!page.items.length && <p className="kw-empty">当前没有这类预设。新建后即可分配给角色。</p>}
@@ -30,14 +30,14 @@ export function ModelPresetsView({ revision, call }: { revision: number; call: C
   </section>;
 }
 
-function ModelPresetForm({ initial, current, call, onCancel, onSaved }: { initial?: PublicModelPreset; current?: PublicModelPreset; call: Call; onCancel(): void; onSaved(name: string): void }) {
+function ModelPresetForm({ initial, current, call, active, onCancel, onSaved }: { initial?: PublicModelPreset; current?: PublicModelPreset; call: Call; active: boolean; onCancel(): void; onSaved(name: string): void }) {
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => { form.current?.scrollIntoView({ block: 'start' }); form.current?.focus({ preventScroll: true }); }, []);
   const [draft, setDraft] = useState(() => ({ id: initial?.id ?? `model-${crypto.randomUUID().slice(0, 8)}`, name: initial?.name ?? '', kind: initial?.kind ?? 'chat', baseUrl: initial?.baseUrl ?? '', model: initial?.model ?? '', harnessProvider: initial?.harnessProvider ?? null, protocol: initial?.protocol ?? 'openai-completions', thinkingFormat: initial?.thinkingFormat ?? 'auto', reasoningEffort: initial?.reasoningEffort ?? null, imageInput: initial?.imageInput ?? true, timeoutMs: initial?.timeoutMs ?? 300000, responseFormat: initial?.responseFormat ?? 'auto' } satisfies Omit<ModelPresetWrite, 'expectedRevision' | 'apiKey' | 'clearApiKey'>));
   const [expected, setExpected] = useState(initial?.revision ?? null);
   const [apiKey, setApiKey] = useState(''); const [clearKey, setClearKey] = useState(false); const [busy, setBusy] = useState(false);
   const [latest, setLatest] = useState<PublicModelPreset>(); const [saveError, setSaveError] = useState('');
-  const catalog = usePages<HarnessModel>('model.catalog', {}, item => JSON.stringify([item.provider, item.id]), 0, call, draft.kind === 'chat');
+  const catalog = usePages<HarnessModel>('model.catalog', {}, item => JSON.stringify([item.provider, item.id]), 0, call, active && draft.kind === 'chat');
   const [reasoning, setReasoning] = useState<{ efforts: { id: string; name: string }[]; defaultEffort: string | null } | null>(null);
   const [reasoningError, setReasoningError] = useState('');
   const selectedProvider = draft.harnessProvider ?? (initial?.kind === 'chat' ? initial.provider : null);
@@ -90,18 +90,19 @@ function ModelPresetForm({ initial, current, call, onCancel, onSaved }: { initia
   </form>;
 }
 
-export function RoleModelPresets({ call, revision, values, onSelect }: { call: Call; revision: number; values: { chat: string; vision: string; image: string }; onSelect(kind: ModelPreset['kind'], id: string, preset?: PublicModelPreset): void }) {
+export function RoleModelPresets({ call, revision, values, requiredChat, manageModels, onSelect }: { call: Call; revision: number; values: { chat: string; vision: string; image: string }; requiredChat: boolean; manageModels(): void; onSelect(kind: ModelPreset['kind'], id: string, preset?: PublicModelPreset): void }) {
   const page = usePages<PublicModelPreset>('model.list', {}, item => item.id, revision, call);
   const [selected, setSelected] = useState<PublicModelPreset[]>([]);
   const selection = JSON.stringify(values);
   useEffect(() => { let live = true; void Promise.all(Object.values(values).filter(Boolean).map(id => call('model.read', { id }))).then(items => { if (live) setSelected(items as PublicModelPreset[]); }).catch(() => {}); return () => { live = false; }; }, [selection, revision]);
   const all = [...new Map([...selected, ...page.items].map(item => [item.id, item])).values()];
-  return <fieldset className="kw-model-fields"><legend>模型预设</legend><p>在“模型配置”页面选择聊天模型、管理视觉和生图接口；此处为角色选择各项用途。</p>
-    {(['chat', 'vision', 'image'] as const).map(kind => <label key={kind}>{kindLabels[kind]}预设<select value={values[kind]} onChange={event => onSelect(kind, event.target.value, all.find(item => item.id === event.target.value))}>
-      <option value="">{kind === 'chat' ? '保留当前模型配置' : kind === 'vision' ? '跟随聊天预设或部署默认' : '使用部署默认生图配置'}</option>
+  return <fieldset className="kw-model-fields"><legend>全局模型方案</legend><p>从全局方案中选择，各角色引用同一份配置。角色的思考等级可以单独覆盖方案默认值。</p>
+    {(['chat', 'vision', 'image'] as const).map(kind => <label key={kind}>{kindLabels[kind]}预设<select required={kind === 'chat' && requiredChat} value={values[kind]} onChange={event => onSelect(kind, event.target.value, all.find(item => item.id === event.target.value))}>
+      <option value="" disabled={kind === 'chat' && requiredChat}>{kind === 'chat' ? requiredChat ? '选择全局聊天方案' : '保留当前聊天配置' : kind === 'vision' ? '跟随聊天方案或部署默认' : '使用部署默认生图配置'}</option>
       {values[kind] && !all.some(item => item.id === values[kind]) && <option value={values[kind]}>{values[kind]}（尚未读取）</option>}
       {all.filter(item => item.kind === kind).map(item => <option key={item.id} value={item.id}>{item.name} · {item.model}{!item.harnessProvider && !item.credentialConfigured ? '（Key 未配置）' : ''}</option>)}
     </select></label>)}
     {page.nextCursor !== null && <Button size="sm" onClick={page.more}>读取更多模型预设</Button>}
+    <Button size="sm" onClick={manageModels}>管理全局模型方案</Button>
   </fieldset>;
 }

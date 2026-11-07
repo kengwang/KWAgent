@@ -25,13 +25,14 @@ interface Snapshot {
   connections: Record<string, { state: string; error: string | null }>; config: { vision: { model: string | null }; chat: { model: string | null; provider: string } };
 }
 type Call = (action: string, payload?: unknown) => Promise<unknown>;
-const tabs = ['活动', '角色', '模型配置', '记忆', '人物', '世界', '目标与安排', '能力', '运维'] as const;
+const tabs = ['活动', '角色', '记忆', '人物', '世界', '目标与安排', '能力', '运维'] as const;
 const stateLabels: Record<string, string> = { active: '已启用', disabled: '未启用', paused: '已暂停', stopped: '已停止', running: '正在活动', waiting: '等待中', resetting: '正在重置', deleting: '正在删除', 'management-pending': '等待管理操作恢复', error: '需要处理', quota: '已达到额度', maintenance: '维护中', 'outside-active-hours': '活动时段外' };
 
 function Panel({ ctx }: { ctx: Context }) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const [roleId, setRoleId] = useState('');
-  const [tab, setTab] = useState<typeof tabs[number]>('活动');
+  const [tab, setTab] = useState<typeof tabs[number] | '模型配置'>('活动');
+  const globalModels = tab === '模型配置';
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
@@ -51,6 +52,7 @@ function Panel({ ctx }: { ctx: Context }) {
   const [notice, setNotice] = useState('');
   const [connectionRevision, setConnectionRevision] = useState(0);
   useEffect(() => { const release = ctx.on('connection/reset', () => setConnectionRevision(value => value + 1)); return () => { release(); }; }, [ctx]);
+  useEffect(() => { if (globalModels) document.querySelector<HTMLElement>('.kw-main')?.scrollTo({ top: 0 }); }, [globalModels]);
   const call: Call = async (action, payload = null) => {
     setError(''); setBusy(true);
     try {
@@ -64,6 +66,7 @@ function Panel({ ctx }: { ctx: Context }) {
   };
   const open = (action: string, payload: Record<string, unknown>) => { const readAction = action === 'record.read' ? 'record.detail' : action; void call(readAction, payload).then(value => { if (detail) setDetailTrail(previous => [...previous, detail]); setDetailState({ value, query: { action: readAction, payload } }); }).catch(() => {}); };
   const editRole = (id: string) => { void call('role.read', { roleId: id }).then(value => setEditing(value as Role)).catch(() => {}); };
+  const manageModels = () => { setTab('模型配置'); setDetail(null); setRoleAction(null); setNotice(''); };
   const loadMemories = () => { void call('memory.list', { roleId, offset: allMemories.length }).then(value => { const page = value as { items: Memory[]; nextCursor: number | null }; setOlderMemories(previous => [...previous, ...page.items]); setMemoryEnd(page.nextCursor === null); }).catch(() => {}); };
   const editPlan = (id: string, owner = roleId) => { void call('record.read', { roleId: owner, kind: 'plan', id }).then(value => setEditingPlan(value as LifePlan)).catch(() => {}); };
   const planPage = useRecords<LifePlan>('plan', roleId, snapshot?.revision ?? 0, tab === '目标与安排', call);
@@ -71,13 +74,13 @@ function Panel({ ctx }: { ctx: Context }) {
   const operationPage = useRecords<Operation>('operation', roleId, snapshot?.revision ?? 0, tab === '能力', call);
   useEffect(() => {
     const controller = new AbortController();
-    const stream = ctx.remote.kwAgent.follow(roleId, controller.signal);
+    const stream = ctx.remote.kwAgent.follow(globalModels ? '' : roleId, controller.signal);
     void (async () => {
       try { for await (const frame of stream) setSnapshot(JSON.parse(frame.payload) as Snapshot); }
       catch (error) { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : String(error)); }
     })();
     return () => { controller.abort(); stream.dispose(); };
-  }, [roleId, connectionRevision]);
+  }, [roleId, connectionRevision, globalModels]);
   const role = snapshot?.roles.find(role => role.id === roleId);
   const currentEdit = editing && editing !== 'new' ? snapshot?.roles.find(role => role.id === editing.id) : undefined;
   const currentPlan = snapshot?.plans.find(plan => plan.id === editingPlan?.id) ?? planPage.items.find(plan => plan.id === editingPlan?.id);
@@ -96,31 +99,34 @@ function Panel({ ctx }: { ctx: Context }) {
   const detailEvent = rawDetail?.summary && typeof rawDetail.summary === 'object' ? rawDetail.summary as Record<string, unknown> : rawDetail;
   return <div className="kw-panel" data-store-revision={snapshot?.revision ?? 0}>
     <aside className="kw-roles">
-      <header><h1>KWAgent</h1><Button size="sm" onClick={() => setEditing('new')}>创建角色</Button></header>
-      <button className={!roleId ? 'kw-role selected' : 'kw-role'} onClick={() => setRoleId('')}>全部活动</button>
-      {roleItems.map(item => <button key={item.id} data-role-id={item.id} className={roleId === item.id ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(item.id); setFound(null); setDetail(null); setRoleAction(null); setNotice(''); }}>
+      <header><h1>KWAgent</h1><Button size="sm" onClick={() => { setTab('角色'); setEditing('new'); }}>创建角色</Button></header>
+      <div className="kw-global-nav" role="navigation" aria-label="全局配置"><button className={globalModels ? 'kw-role selected' : 'kw-role'} aria-current={globalModels ? 'page' : undefined} onClick={manageModels}>全局模型方案</button></div>
+      <h2 className="kw-role-heading">角色</h2>
+      <button className={!globalModels && !roleId ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(''); setTab('活动'); }}>全部活动</button>
+      {roleItems.map(item => <button key={item.id} data-role-id={item.id} className={!globalModels && roleId === item.id ? 'kw-role selected' : 'kw-role'} onClick={() => { setRoleId(item.id); if (globalModels) setTab('角色'); setFound(null); setDetail(null); setRoleAction(null); setNotice(''); }}>
         <strong>{item.name}</strong><span>{stateLabels[item.runtime?.state ?? item.state] ?? item.state}</span>
       </button>)}
       {roleCursor !== null && <Button size="sm" onClick={() => { void call('records.list', { kind: 'role', cursor: roleCursor }).then(value => { const page = value as { items: Role[]; nextCursor: number | null }; setMoreRoles(previous => [...previous, ...page.items]); setRoleCursor(page.nextCursor); }).catch(() => {}); }}>{roleCursor ? '读取更多角色' : '读取角色列表'}</Button>}
       <footer>{snapshot ? `修订 ${snapshot.revision}` : '正在连接 Host'}<br />{snapshot?.maintenance ? '服务器维护中' : '角色自主安排活动'}</footer>
     </aside>
     <main className="kw-main">
-      <header className="kw-header"><div><h2>{tab === '模型配置' ? '模型配置' : role?.name ?? '全部活动'}</h2><p>{tab === '模型配置' ? '管理共享预设，由各角色选择使用' : role ? `${role.worldMode === 'real' ? '现实生活' : role.worldMode === 'fictional' ? '共同虚构世界' : '现实与虚构并存'} · 今日 ${role.usage.requests} 次请求，${role.usage.tokens} Token` : '查看角色的经历、认识和自主安排'}</p></div>
+      <header className="kw-header"><div><h2>{globalModels ? '全局模型方案' : role?.name ?? '全部活动'}</h2><p>{globalModels ? '所有角色共享，在角色配置中通过下拉框选择' : role ? `${role.worldMode === 'real' ? '现实生活' : role.worldMode === 'fictional' ? '共同虚构世界' : '现实与虚构并存'} · 今日 ${role.usage.requests} 次请求，${role.usage.tokens} 总处理 Token（含缓存）` : '查看角色的经历、认识和自主安排'}</p>{!globalModels && role && <p>用量包含主对话与记忆整理等辅助请求；费用请查看提供商账单。</p>}</div>
         {role && tab !== '模型配置' && <div className="kw-actions"><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'reset', role }); }}>重置对话</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'delete', role }); }}>删除角色</Button></div>}
       </header>
       {notice && <p role="status">{notice}</p>}
-      {role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，群聊继续运行，空闲后重新整理。</p>}
+      {!globalModels && role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，群聊继续运行，空闲后重新整理。</p>}
       {roleAction && <section className="kw-error" role="dialog" aria-labelledby="kw-role-action-title">
         <h3 id="kw-role-action-title">{roleAction.kind === 'reset' ? '重置当前对话' : '删除角色'}</h3>
         <p>{roleAction.kind === 'reset' ? `为 ${roleAction.role.name} 创建空白会话，保留人设、长期记忆、人物关系和角色目标与安排。当前活动、后台任务及原会话的原生提醒将停止，未接纳的外部消息继续保留。` : `停止 ${roleAction.role.name}，解除会话绑定并取消后续安排。原始经历、记忆与修订历史保留；角色标识为历史归属保留，重新创建时使用新标识。`}</p>
         <div className="kw-actions"><Button variant="primary" disabled={busy} onClick={() => { const selected = roleAction; void call(selected.kind === 'reset' ? 'role.reset' : 'role.delete', { id: selected.role.id, expectedRevision: selected.role.revision }).then(() => { setRoleAction(null); setDetail(null); setNotice(selected.kind === 'reset' ? '当前对话已重置，长期记忆与角色设置保留。' : '角色已删除，历史记录保留。'); if (selected.kind === 'delete') { setMoreRoles(previous => previous.filter(item => item.id !== selected.role.id)); setRoleId(''); } }).catch(() => {}); }}>{roleAction.kind === 'reset' ? '确认重置' : '确认删除'}</Button><Button disabled={busy} onClick={() => { void call('role.read', { roleId: roleAction.role.id }).then(value => setRoleAction({ ...roleAction, role: value as Role })).catch(() => {}); }}>读取当前角色版本</Button><Button disabled={busy} onClick={() => setRoleAction(null)}>取消</Button></div>
       </section>}
-      <nav aria-label="角色管理">{tabs.map(name => <button key={name} aria-current={tab === name ? 'page' : undefined} onClick={() => { setTab(name); setFound(null); }}>{name}</button>)}</nav>
-      {(error || snapshot?.startupError || role?.runtime.error) && <div role="alert" className="kw-error">{error || role?.runtime.error || snapshot?.startupError}</div>}
-      {editing && editing !== 'new' && currentEdit && editing.revision !== currentEdit.revision && <div role="alert" className="kw-error"><p>角色已经更新，输入内容已保留。当前人格：</p><p className="kw-prose">{currentEdit.persona}</p><Button onClick={() => editRole(currentEdit.id)}>读取当前版本</Button></div>}
+      {!globalModels && <nav aria-label="角色管理">{tabs.map(name => <button key={name} aria-current={tab === name ? 'page' : undefined} onClick={() => { setTab(name); setFound(null); }}>{name}</button>)}</nav>}
+      {(error || snapshot?.startupError || !globalModels && role?.runtime.error) && <div role="alert" className="kw-error">{error || !globalModels && role?.runtime.error || snapshot?.startupError}</div>}
+      {!globalModels && editing && editing !== 'new' && currentEdit && editing.revision !== currentEdit.revision && <div role="alert" className="kw-error"><p>角色已经更新，输入内容已保留。当前人格：</p><p className="kw-prose">{currentEdit.persona}</p><Button onClick={() => editRole(currentEdit.id)}>读取当前版本</Button></div>}
       {tab === '目标与安排' && editingPlan && currentPlan && editingPlan.revision !== currentPlan.revision && <div role="alert" className="kw-error"><p>事项已经更新，输入内容已保留。当前内容：{currentPlan.instruction}</p><Button onClick={() => editPlan(currentPlan.id, currentPlan.roleId)}>读取当前事项版本</Button></div>}
-      {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} revision={snapshot.revision} busy={busy} call={call} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
-        {tab === '模型配置' && <ModelPresetsView revision={snapshot.revision} call={call} />}
+      {snapshot && <section className="kw-content" hidden={!globalModels} aria-label="全局模型方案"><ModelPresetsView active={globalModels} revision={snapshot.revision} call={call} /></section>}
+      <div hidden={globalModels}>
+      {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} revision={snapshot.revision} busy={busy} call={call} manageModels={manageModels} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
         {tab === '活动' && <><EventInput roleId={roleId} call={call} /><TaskList roleId={roleId} revision={snapshot.revision} call={call} open={open} /><Timeline roleId={roleId} revision={snapshot.revision} call={call} open={open} /><EventHistory roleId={roleId} revision={snapshot.revision} call={call} open={open} unassigned={setDetail} /></>}
         {tab === '角色' && (role ? <><div className="kw-section-head"><h3>当前人格</h3><Button onClick={() => editRole(role.id)}>编辑角色</Button></div><p className="kw-prose">{role.persona}</p><h3>初始设定</h3><p className="kw-prose">{role.initialPersona}</p><h3>自我状态</h3><p>{role.selfState || '尚未形成当前状态。'}</p><h3>表达示例</h3><p className="kw-muted">仅作为表达风格，不作为真实经历。</p>{role.expressionExamples.map((example, index) => <p className="kw-prose" key={index}>{example}</p>)}<h3>会话归属</h3><p>群聊：{role.globalGroups ? '账号全局共享' : role.groups.join('、') || '尚未绑定'}；私聊：{role.defaultPrivate ? '账号默认角色' : role.contacts.join('、') || '按联系人绑定'}</p><Button onClick={() => open('history', { entity: 'role', id: role.id })}>查看人格修订</Button><Button onClick={() => open('persona.read', { roleId })}>读取完整人格</Button></> : <Empty text="选择或创建一个角色来编辑人格与会话归属。" />)}
         {tab === '角色' && <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['life', 'expression', 'reflection']} />}
@@ -143,7 +149,7 @@ function Panel({ ctx }: { ctx: Context }) {
           {planPage.nextCursor !== null && <Button onClick={planPage.more}>读取更多事项</Button>}
         </>}
         {tab === '能力' && <>
-          <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>聊天、视觉和生图接口在模型配置中统一管理，角色分别选择预设。</p><Button onClick={() => setTab('模型配置')}>管理模型预设</Button><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
+          <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>所有角色共用全局模型方案，在角色配置中下拉选择。</p><Button onClick={manageModels}>管理全局模型方案</Button><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
           <CapabilityList revision={snapshot.revision} call={call} open={open} /><h3>自主扩展</h3><ExtensionForm roleId={roleId} call={call} />
           {role && <RoleSkillForm key={role.id} roleId={role.id} revision={role.revision} call={call} />}
           <PageNotice page={extensionPage} />
@@ -154,6 +160,7 @@ function Panel({ ctx }: { ctx: Context }) {
         </>}
         {tab === '运维' && <><h3>服务器操作</h3><div className="kw-actions"><Button onClick={async () => setDetail(await call('doctor'))}>检查运行环境</Button><Button onClick={() => act(snapshot.maintenance ? 'resume' : 'quiesce')}>{snapshot.maintenance ? '恢复活动' : '进入维护'}</Button><Button disabled={busy} onClick={async () => setDetail(await call('backup'))}>创建备份</Button><Button disabled={busy} onClick={async () => setDetail(await call('reindex'))}>重建记忆索引</Button></div><p>应用版本 {snapshot.version} · Harness 0.2.2-alpha.2</p></>}
       </section>}
+      </div>
     </main>
     {detail !== null && <aside className="kw-detail"><div className="kw-section-head"><h3>内容与来源</h3><Button size="sm" onClick={() => setDetail(null)}>关闭</Button></div>{detailTrail.length > 0 && <Button size="sm" onClick={() => { setDetailState(detailTrail[detailTrail.length - 1]!); setDetailTrail(previous => previous.slice(0, -1)); }}>返回上一项</Button>}<DetailReader detail={detail} roleId={roleId} call={call} onOpen={open} />{detailEvent && 'seq' in detailEvent && 'id' in detailEvent && <TransferEvent eventId={String(detailEvent.id)} roles={roleItems} call={call} />}</aside>}
   </div>;

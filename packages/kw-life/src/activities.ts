@@ -52,7 +52,7 @@ export class Activities {
     if (event.type === 'user/message') {
       const accepted = this.accepted.get(roleId) ?? new Set<string>(); accepted.add(event.data.id); this.accepted.set(roleId, accepted);
       const awaiting = this.awaiting.get(roleId) ?? new Set<string>(); awaiting.add(event.data.id); this.awaiting.set(roleId, awaiting);
-      if (String(event.data.source.kind) === 'runtime-context') return;
+      if (['runtime-context', 'kw-step-context'].includes(String(event.data.source.kind))) return;
       if (!activity) return;
       this.store.link(activity.id, 'input', event.data.id, { seq: event.seq, source: asJson(event.data.source), state: 'accepted', time: event.time });
       if (event.data.source.kind === 'kw-event') {

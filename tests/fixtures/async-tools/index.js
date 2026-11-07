@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, appendFile, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -14,11 +14,13 @@ export function apply(ctx) {
   ctx.on('session/event', (session, event) => { if (session.id === life.store.role(id).sessionId && event.type === 'turn/end') turnEnds.push(event.data); });
   ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === 'job_output' || exec.name === 'job_list') readQueues.push({ at: Date.now(), name: exec.name, arguments: exec.arguments, queued: exec.agent.inbox.nextStep.some(message => message.source.kind === 'kw-event' && message.source.eventIds.some(id => life.store.event(id).type === 'background-result')) }); return next(); });
   ctx.on('llm/stream', async function* (options, next) {
+    let captured;
     if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) {
-      requests.push({ at: Date.now(), provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort ?? null, origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) });
+      captured = { at: Date.now(), provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort ?? null, origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind), systemHash: createHash('sha256').update(options.system ?? '').digest('hex'), messageHashes: options.messages.map(message => createHash('sha256').update(JSON.stringify({ role: message.role, content: message.content })).digest('hex')), contexts: options.messages.filter(message => message.source?.kind === 'kw-step-context').map(message => ({ mode: message.source.mode, bytes: Buffer.byteLength(JSON.stringify(message.content)) })) };
+      requests.push(captured);
       if (process.env.KW_ASYNC_RACE_TEST === 'true' && life.tasks.list({ roleId: id, cursor: 0, limit: 200 }).items.some(task => task.mode === 'background' && task.state === 'running')) await writeFile(join(directory, 'race-release'), '真实后续模型请求已经开始');
     }
-    yield* next();
+    for await (const chunk of next()) { if (captured && chunk.type === 'usage') captured.usage = chunk.usage; yield chunk; }
   });
   ctx.tools.guard(exec => /mcp__lagrange__/.test(exec.name) ? '异步验收禁止社交工具' : undefined);
   ctx.tools.register({ name: 'verification_async_file', description: '等待指定时间后实际写入隔离文件。', parameters: { type: 'object', properties: { marker: { type: 'string' }, delay: { type: 'number' } }, required: ['marker', 'delay'] }, output: { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }, execute: async (args, exec) => {

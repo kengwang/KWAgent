@@ -73,3 +73,24 @@ test('生图配置与动态模型凭据始终脱敏', () => {
   assert.ok(!JSON.stringify(publicConfig(config)).includes('image-local-secret'));
   assert.equal(redact('image-local-secret saved-model-secret', config), '[REDACTED] [REDACTED]');
 });
+
+test('模型方案全局保存，两个角色引用同一条记录并保留各自的思考等级', async () => {
+  const root = join(process.cwd(), '.artifacts/tests', randomUUID());
+  const store = new Store(join(root, 'state.sqlite'));
+  try {
+    const models = new ModelPresets(new Context(), store, loadConfig({ KW_DATA_ROOT: root }));
+    const preset = modelPresetSchema.parse({ id: 'shared-chat', name: '共用聊天方案', kind: 'chat', harnessProvider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high', revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    store.put('model-preset', preset.id, null, asJson(preset), null, 'owner', '创建全局方案');
+    const first = store.createRole(roleInputSchema.parse({ id: 'first', accountId: 'main', name: '第一个角色', initialPersona: '独立人格。', provider: 'deepseek-official', model: 'deepseek-flash', chatPresetId: preset.id, reasoningEffort: 'low', state: 'paused' }));
+    const second = store.createRole(roleInputSchema.parse({ id: 'second', accountId: 'main', name: '第二个角色', initialPersona: '独立人格。', provider: 'deepseek-official', model: 'deepseek-flash', chatPresetId: preset.id, state: 'paused' }));
+    assert.equal((await models.list('chat')).items.length, 1);
+    assert.equal(store.db.prepare("SELECT role_id FROM documents WHERE kind='model-preset' AND id=?").get(preset.id)?.role_id, null);
+    assert.equal((await models.read(first.chatPresetId!)).id, (await models.read(second.chatPresetId!)).id);
+    assert.equal(models.selection(first).reasoningEffort, 'low'); assert.equal(models.selection(second).reasoningEffort, 'high');
+    await assert.rejects(models.remove(preset.id, preset.revision), error => error instanceof Error && error.message.includes('第一个角色') && error.message.includes('第二个角色'));
+    store.updateRole(first.id, { chatPresetId: null }, first.revision, 'owner', '解除引用');
+    await assert.rejects(models.remove(preset.id, preset.revision), /第二个角色/);
+    assert.equal((await models.read(preset.id)).revision, 1);
+    assert.equal(store.history('model-preset', preset.id).length, 1);
+  } finally { store.close(); }
+});

@@ -6,7 +6,7 @@ type Call = (action: string, payload?: unknown) => Promise<unknown>;
 const numbers = (text: string) => text.split(/[,，\s]+/).filter(Boolean).map(Number);
 function object(value: Json | undefined): Record<string, Json> { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
 
-export function RoleForm({ initial, config, busy, call, revision, onCancel, onSave }: { initial?: Role; config: { provider: string; model: string | null }; busy: boolean; call: Call; revision: number; onCancel(): void; onSave(value: unknown): Promise<void> }) {
+export function RoleForm({ initial, config, busy, call, revision, manageModels, onCancel, onSave }: { initial?: Role; config: { provider: string; model: string | null }; busy: boolean; call: Call; revision: number; manageModels(): void; onCancel(): void; onSave(value: unknown): Promise<void> }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [id, setId] = useState(initial?.id ?? '');
   const [persona, setPersona] = useState(initial?.persona ?? '');
@@ -44,7 +44,7 @@ export function RoleForm({ initial, config, busy, call, revision, onCancel, onSa
   const [start, setStart] = useState(initial?.activeHours?.start ?? '');
   const [end, setEnd] = useState(initial?.activeHours?.end ?? '');
   const [budget, setBudget] = useState(initial?.memoryTokens ?? 8192);
-  return <form className="kw-form" onSubmit={event => {
+  return <form className="kw-form" aria-label="角色配置" onSubmit={event => {
     event.preventDefault();
     void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), preinjectSkills: preinjectSkills.split(/[,，\s]+/).filter(Boolean), provider, model, chatPresetId: presets.chat || null, visionPresetId: presets.vision || null, imagePresetId: presets.image || null, reasoningEffort: reasoningEffort || null, worldMode: world,
       groups: numbers(groups), contacts: numbers(contacts), adminQQs: numbers(adminQQs), globalGroups: global, defaultPrivate: privateRole,
@@ -59,8 +59,8 @@ export function RoleForm({ initial, config, busy, call, revision, onCancel, onSa
     <label>表达示例<textarea rows={5} value={examples} onChange={event => setExamples(event.target.value)} placeholder="示例之间留空行，仅作为风格上下文。" /></label>
     <label>预注入 Skill 列表<textarea rows={4} value={preinjectSkills} onChange={event => setPreinjectSkills(event.target.value)} placeholder="每行填写一个已安装的 Skill 名称，例如 kwagent-life 或 lagrange。" /></label>
     <p>每个模型步骤自动读取并注入所选 Skill 正文；修改从下一步骤生效。引用资料仍按需读取，缺失或不可读取的 Skill 会明确报错。</p>
-    <RoleModelPresets call={call} revision={revision} values={presets} onSelect={(kind, id, preset) => { setPresets(previous => ({ ...previous, [kind]: id })); if (kind === 'chat' && preset?.provider) { setProvider(preset.provider); setModel(preset.model); } }} />
-    {!presets.chat && <><label>模型提供者<input required value={provider} onChange={event => setProvider(event.target.value)} /></label><label>模型<input required value={model} onChange={event => setModel(event.target.value)} /></label></>}
+    <RoleModelPresets call={call} revision={revision} values={presets} requiredChat={!initial || Boolean(initial.chatPresetId)} manageModels={manageModels} onSelect={(kind, id, preset) => { setPresets(previous => ({ ...previous, [kind]: id })); if (kind === 'chat') { setProvider(preset?.provider ?? initial?.provider ?? config.provider); setModel(preset?.model ?? initial?.model ?? config.model ?? ''); } }} />
+    {initial && !presets.chat && <p className="kw-muted">当前聊天配置：{provider} / {model}。选择全局聊天方案后使用该方案。</p>}
     <label>对话推理等级<select aria-label="对话推理等级" value={reasoningEffort} disabled={busy || !reasoning} onChange={event => setReasoningEffort(event.target.value)}>
       <option value="">{presetReasoning ? `跟随聊天预设（${presetReasoning}）` : `跟随提供商默认值${reasoning?.defaultEffort ? `（${reasoning.defaultEffort}）` : ''}`}</option>
       {reasoning?.efforts.map(effort => <option key={effort.id} value={effort.id}>{effort.name}（{effort.id}）</option>)}

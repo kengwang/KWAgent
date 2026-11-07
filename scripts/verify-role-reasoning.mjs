@@ -62,8 +62,7 @@ try {
   await page.getByLabel('标识', { exact: true }).fill(id);
   await page.getByLabel('名称', { exact: true }).fill(name);
   await page.getByLabel('人格', { exact: true }).fill('你是小雪。这是本机内部验收，没有真实社交任务。收到输入后只用一句普通assistant文字回应并结束，不调用任何工具，不创建计划，不向QQ或空间发送。');
-  await page.getByLabel('模型提供者', { exact: true }).fill(env.KW_LLM_PROVIDER);
-  await page.getByLabel('模型', { exact: true }).fill(env.KW_LLM_MODEL);
+  await page.getByRole('combobox', { name: '聊天预设', exact: true }).selectOption('env-chat');
   await expect(page.getByLabel('对话推理等级', { exact: true })).toBeEnabled();
   await page.getByLabel('对话推理等级', { exact: true }).selectOption('high');
   await page.getByRole('button', { name: '保存角色', exact: true }).click();

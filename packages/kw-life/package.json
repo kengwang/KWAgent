@@ -1,6 +1,6 @@
 {
-  "name": "@kwagent/kw-life", "version": "0.8.3", "type": "module",
+  "name": "@kwagent/kw-life", "version": "0.8.4", "type": "module",
   "exports": { ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" }, "./jobs": { "types": "./lib/types/jobs.d.ts", "default": "./lib/jobs.js" } },
   "files": ["lib", "skills"], "engines": { "dsh": "0.2.2-alpha.2" },
-  "dependencies": { "@kwagent/core": "workspace:*", "@kwagent/kw-mind": "workspace:*", "@kwagent/kw-lagrange": "workspace:*", "js-yaml": "4.3.2" }
+  "dependencies": { "@kwagent/core": "workspace:*", "@kwagent/kw-mind": "workspace:*", "@kwagent/kw-lagrange": "workspace:*", "fast-json-patch": "3.1.1", "js-yaml": "4.3.2" }
 }

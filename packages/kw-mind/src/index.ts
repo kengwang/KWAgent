@@ -18,6 +18,7 @@ import {
 import type { AppConfig, Json, Memory, MemoryInput, Recall, ContinuityScene, Role } from '@kwagent/core';
 import { createHash } from 'node:crypto';
 import { Continuity, continuityGuidance } from './continuity.ts';
+import { consolidationMessages, hasConsolidationContent, type ConsolidationInput } from './consolidation-input.ts';
 import { EvidenceError } from '@kwagent/core';
 import { parseModelOutput, modelRequestFailure } from './model-output.ts';
 export { Continuity } from './continuity.ts';
@@ -107,7 +108,7 @@ export class Mind extends Service {
 
   private async auxiliaryEffort(role: { provider: string; model: string }, signal?: AbortSignal) {
     const model = await this.ctx.llm.resolveModelInfo(role.provider, role.model, signal);
-    return model.reasoning?.efforts.find(effort => effort.id === 'off')?.id;
+    return model.reasoning?.efforts.find(effort => effort.id === 'off')?.id ?? model.reasoning?.efforts[0]?.id;
   }
 
   async revise(input: MemoryInput, expected: number | null, actor: string, reason: string, signal?: AbortSignal): Promise<Memory> {
@@ -184,8 +185,9 @@ export class Mind extends Service {
       if (!events.length) return true;
       const role = this.models.effective(this.store.role(roleId));
       const instructions = consolidationInstructions;
-      const input = { role, validationFeedback: feedback, sources: [] as { id: string; part: number; total: number; payloadId: string; text: string; sourceMeaning: string }[], memories: [] as Memory[], continuity: [] as unknown[] };
-      const promptTokens = tokens(instructions) + 8;
+      const input: ConsolidationInput = { role, validationFeedback: feedback, sources: [], memories: [], continuity: [] };
+      let advanced = false;
+      const promptTokens = tokens(instructions) + 16;
       for (const event of events) {
         const { activityId, ...original } = event;
         if (['tool', 'media'].includes(event.source) && original.payload && typeof original.payload === 'object' && !Array.isArray(original.payload)) {
@@ -196,7 +198,7 @@ export class Mind extends Service {
         const body = original.payload && typeof original.payload === 'object' && !Array.isArray(original.payload) ? original.payload : {};
         const internalTool = event.type === 'tool-result' && /^(continuity_|memory_|self_|life_plan|operation_read|capability_read|run_code$)/.test(String(body.name));
         const view = manifest ? manifest.view ?? 'original' : internalTool ? 'internal-summary' : event.type === 'internal-activity' ? 'assistant-text' : 'original';
-        if (internalTool && !manifest) { this.store.markConsolidated([event.id]); continue; }
+        if (!manifest && !hasConsolidationContent(event)) { this.store.markConsolidated([event.id]); advanced = true; continue; }
         const message = body.message && typeof body.message === 'object' && !Array.isArray(body.message) ? body.message : {};
         const sourceView = view === 'internal-summary' ? { id: original.id, type: original.type, source: original.source, occurredAt: original.occurredAt, tool: body.name, meaning: '内部资料读取或修订。内容与来源保存在相应记录及完整负载中，不作为新的外部经历反复提取。', isError: body.isError ?? false } : view === 'assistant-text' ? { id: original.id, type: original.type, occurredAt: original.occurredAt, meaning: '角色内部文字，不代表对外发送或外部事实', content: Array.isArray(message.content) ? message.content.filter(block => block && typeof block === 'object' && !Array.isArray(block) && block.type === 'text') : [] } : original;
         const text = JSON.stringify(readable(asJson(sourceView))); const digest = createHash('sha256').update(text).digest('hex');
@@ -208,7 +210,7 @@ export class Mind extends Service {
         const parts = manifest.ends.map((end, index) => text.slice(index ? manifest!.ends[index - 1]! : 0, end));
         const pending: number[] = [];
         parts.forEach((part, index) => { if (!this.store.chunk(event.id, index, parts.length, digest)) pending.push(index); });
-        if (!pending.length) { this.store.markConsolidated([event.id]); continue; }
+        if (!pending.length) { this.store.markConsolidated([event.id]); advanced = true; continue; }
         const ref = await this.payloads.put(roleId, event.id, asJson(event), signal);
         for (const part of pending) {
           const candidate = { id: event.id, part, total: parts.length, payloadId: ref.payloadId, text: parts[part]!, sourceMeaning: this.continuity.sourceMeaning(roleId, event.id) };
@@ -217,21 +219,22 @@ export class Mind extends Service {
         }
         if (input.sources.length && tokens(JSON.stringify(input)) > this.config.budgets.consolidation / 2) break;
       }
-      if (!input.sources.length) { if (this.store.unprocessed(roleId, 1).some(event => event.seq <= upper)) throw new Error('人格与必需来源超过记忆整理输入预算'); return true; }
+      if (!input.sources.length) { if (advanced) return true; if (this.store.unprocessed(roleId, 1).some(event => event.seq <= upper)) throw new Error('人格与必需来源超过记忆整理输入预算'); return true; }
       for (const record of this.continuity.list(roleId, { limit: 100 }).items) if (tokens(JSON.stringify({ ...input, continuity: [...input.continuity, record] })) + promptTokens <= this.config.budgets.consolidation) input.continuity.push(record);
       for (const memory of this.store.memories(roleId, 100)) {
         if (tokens(JSON.stringify({ ...input, memories: [...input.memories, memory] })) + promptTokens <= this.config.budgets.consolidation) input.memories.push(memory);
       }
-      const inputRef = await this.payloads.put(roleId, `consolidation:${randomUUID()}`, asJson({ system: instructions, input }), signal);
+      const messages = consolidationMessages(input);
+      const inputRef = await this.payloads.put(roleId, `consolidation:${randomUUID()}`, asJson({ system: instructions, input, messages }), signal);
       const reasoningEffort = await this.auxiliaryEffort(role, signal);
-      const operation = this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), roleRevision: role.revision, inputRef, estimatedTokens: tokens(JSON.stringify(input)) + promptTokens, reasoningEffort: reasoningEffort ?? null }));
+      const operation = this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), roleRevision: role.revision, inputRef, estimatedTokens: messages.reduce((sum, message) => sum + tokens(message.content[0]!.text), promptTokens), reasoningEffort: reasoningEffort ?? null }));
       const assembler = new BlockAssembler();
       try {
         for await (const chunk of this.auxiliaryStream({
           provider: role.provider, model: role.model, sessionId: agent.session.id,
           reasoningEffort,
           system: instructions,
-          messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input) }] }], signal,
+          messages, signal,
         })) assembler.push(chunk);
         signal?.throwIfAborted();
         if (assembler.finish.kind !== 'stop') throw new EvidenceError(`记忆整理未完成：${assembler.finish.kind}`);
@@ -243,10 +246,18 @@ export class Mind extends Service {
           if (current.revision !== role.revision) throw new ConflictError(asJson(current));
           result.memories.forEach((memory, index) => {
             const { expectedRevision, ...value } = memory;
-            this.continuity.assertMemory({ ...value, roleId });
-            this.store.saveMemory({ ...value, roleId }, expectedRevision, roleId, result.reason);
+            const candidate = { ...value, roleId };
+            this.continuity.assertMemory(candidate);
+            if (expectedRevision !== null && value.id) {
+              const previous = this.store.memory(value.id);
+              if (previous.revision !== expectedRevision) throw new ConflictError(asJson(previous));
+              if (JSON.stringify(memoryInputSchema.parse(previous)) === JSON.stringify(memoryInputSchema.parse(candidate))) return;
+            }
+            this.store.saveMemory(candidate, expectedRevision, roleId, result.reason);
           });
-          if (result.persona != null || result.selfState != null) this.selfRevise(roleId, { patch: { ...(result.persona == null ? {} : { persona: result.persona }), ...(result.selfState == null ? {} : { selfState: result.selfState }) }, expectedRevision: role.revision, reason: result.reason, sources: [...new Set(input.sources.map(source => source.id))] });
+          const persona = result.persona != null && result.persona !== role.persona ? result.persona : null;
+          const selfState = result.selfState != null && result.selfState !== role.selfState ? result.selfState : null;
+          if (persona !== null || selfState !== null) this.selfRevise(roleId, { patch: { ...(persona === null ? {} : { persona }), ...(selfState === null ? {} : { selfState }) }, expectedRevision: role.revision, reason: result.reason, sources: [...new Set(input.sources.map(source => source.id))] });
           for (const change of result.continuity) this.continuity.revise(roleId, change, 'consolidator');
           for (const source of input.sources) this.store.completeChunk(source.id, source.part);
           this.store.finishOperation(operation.id, 'succeeded', asJson({ sources: input.sources.map(({ text, ...source }) => source), output: result, formatRepaired: parsed.repaired, usage: assembler.usage ?? null }));
