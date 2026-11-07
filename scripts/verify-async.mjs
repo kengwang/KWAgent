@@ -38,7 +38,7 @@ try {
   const handle = automatic.result.results[0].result.value.background; assert.ok(handle.jobId); assert.ok(automatic.elapsed >= 4900 && automatic.elapsed < 6400, automatic.elapsed);
   const independent = await call({ action: 'execute', code: 'return await tools.verification_async_file({marker:"independent",delay:0});' });
   assert.equal(independent.result.results[0].result.isError, false);
-  const finished = await until(async () => { const current = await state(); return current.executions.includes('second') ? current : undefined; }, '后台顺序写入');
+  const finished = await until(async () => { const current = await state(); return current.executions.includes('second') && current.tasks.items.some(task => task.id === handle.taskId && task.state === 'completed') && current.events.some(event => event.payload.taskId === handle.taskId) ? current : undefined; }, '后台顺序写入和结果提交');
   assert.deepEqual(finished.executions, ['independent', 'first', 'second']);
   await call({ action: 'pause' });
   assert.equal(finished.events.length, 1);
