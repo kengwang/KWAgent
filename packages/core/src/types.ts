@@ -24,6 +24,7 @@ export const roleSchema = z.object({
   adminQQs: z.array(z.number().int().positive().safe()).refine(ids => new Set(ids).size === ids.length, '角色管理员 QQ 不能重复').default([]),
   personaSources: z.array(z.string()).default([]),
   provider: z.string().min(1), model: z.string().min(1),
+  reasoningEffort: z.string().min(1).max(64).nullable().default(null),
   state: desiredStateSchema.default('disabled'), revision: z.number().int().positive().default(1),
   deletedAt: z.string().nullable().default(null),
   sessionId: z.string().min(1), groups: z.array(z.number().int().positive()).default([]),
@@ -37,8 +38,14 @@ export const roleSchema = z.object({
 });
 export type Role = z.infer<typeof roleSchema>;
 export const roleInputSchema = roleSchema.omit({ revision: true, createdAt: true, updatedAt: true, sessionId: true, persona: true, selfState: true, personaSources: true, deletedAt: true })
-  .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), preinjectSkills: roleSchema.shape.preinjectSkills.optional(), adminQQs: roleSchema.shape.adminQQs.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional() });
+  .extend({ persona: z.string().optional(), selfState: z.string().optional(), expressionExamples: roleSchema.shape.expressionExamples.optional(), preinjectSkills: roleSchema.shape.preinjectSkills.optional(), adminQQs: roleSchema.shape.adminQQs.optional(), memoryTokens: roleSchema.shape.memoryTokens.optional(), reasoningEffort: roleSchema.shape.reasoningEffort.optional() });
 export type RoleInput = z.infer<typeof roleInputSchema>;
+
+/** 局部修改只保留实际提交的字段，创建默认值不进入修改内容。 */
+export const rolePatchSchema = z.record(z.string(), z.unknown()).transform((input): Partial<Role> => {
+  const parsed = roleSchema.partial().parse(input);
+  return Object.fromEntries(Object.entries(parsed).filter(([key]) => Object.hasOwn(input, key))) as Partial<Role>;
+});
 
 export const eventSchema = z.object({
   id: z.string(), seq: z.number().int(), accountId: z.string(), roleId: z.string().nullable(),

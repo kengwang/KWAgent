@@ -15,6 +15,7 @@ export async function apply(ctx) {
   let sequence = Date.now();
   const directory = join(process.env.KW_DATA_ROOT, 'workspaces', probeId);
   await mkdir(directory, { recursive: true });
+  if (process.env.KW_REASONING_TEST === 'true') ctx.tools.guard(() => '本机推理等级验收禁止执行工具');
   ctx.tools.guard(exec => { if (!exec.name.startsWith('mcp__lagrange__')) return; if (exec.name === 'mcp__lagrange__send_group_message_reaction') reactionAttempts++; return '边界验收禁止QQ和空间调用'; });
   ctx.on('llm/stream', async function* (options, next) {
     const role = life.store.roles().find(role => role.sessionId === options.sessionId);
@@ -25,7 +26,7 @@ export async function apply(ctx) {
       const pending = life.store.events(id, 200).filter(event => event.senderId === 10002 && !inputs.some(input => input.id === event.id) && !['completed', 'accepted'].includes(life.store.deliveryStatus(event.id).state));
       const visible = pending.filter(event => markers.has(event.id) && serialized.includes(markers.get(event.id)));
       const backgrounds = options.messages.filter(message => message.source.kind === 'runtime-context' && message.source.form === 'snapshot' && message.source.sections.some(section => section.name === 'kw-life-state'));
-      const record = { administratorInput: frozen.authorization.administratorInput, adminInputs: inputs.filter(event => event.senderId === 10001).length, ordinaryInputs: inputs.filter(event => event.senderId === 10002).length, pendingVisible: visible.length, identityVisible: serialized.includes('当前角色实际使用的QQ账号'), schemas: options.tools?.map(tool => tool.name) ?? [], backgrounds: backgrounds.length, backgroundTokens: backgrounds.reduce((sum, message) => sum + estimateMessage(message), 0), requestTokens: (options.system ? estimateContent([{ type: 'text', text: options.system }]) + ROLE_OVERHEAD : 0) + options.messages.reduce((sum, message) => sum + estimateMessage(message), 0) + estimateToolsTokens(options.tools ?? []) };
+      const record = { reasoningEffort: options.reasoningEffort ?? null, administratorInput: frozen.authorization.administratorInput, adminInputs: inputs.filter(event => event.senderId === 10001).length, ordinaryInputs: inputs.filter(event => event.senderId === 10002).length, pendingVisible: visible.length, identityVisible: serialized.includes('当前角色实际使用的QQ账号'), schemas: options.tools?.map(tool => tool.name) ?? [], backgrounds: backgrounds.length, backgroundTokens: backgrounds.reduce((sum, message) => sum + estimateMessage(message), 0), requestTokens: (options.system ? estimateContent([{ type: 'text', text: options.system }]) + ROLE_OVERHEAD : 0) + options.messages.reduce((sum, message) => sum + estimateMessage(message), 0) + estimateToolsTokens(options.tools ?? []) };
       captured.push(record);
       assert.equal(record.identityVisible, true, '实际请求缺少已确认的登录账号身份');
       assert.equal(record.pendingVisible, 0, '尚未接纳的输入不应提前重复提供');

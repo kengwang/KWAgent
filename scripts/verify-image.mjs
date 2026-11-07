@@ -40,6 +40,13 @@ try {
   }
   assert.equal(ready, true, 'Harness 管理界面未就绪，诊断位于 /data/tmp/image-smoke.log');
   assert.equal(admin('doctor').database, 'ok');
+  const reasoning = admin('model.reasoning', { provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash' });
+  assert.ok(reasoning.efforts.some(effort => effort.id === 'high'));
+  const configured = admin('role.create', { id: 'image-reasoning', accountId: 'main', name: '推理等级检查', initialPersona: '仅用于断网配置检查。', provider: 'kw-chat', model: 'cn:deepseek-v4.1-flash', reasoningEffort: 'high', state: 'paused', groups: [20001], adminQQs: [10001] });
+  const changed = admin('role.update', { id: configured.id, expectedRevision: configured.revision, patch: { reasoningEffort: 'off' } });
+  assert.equal(changed.reasoningEffort, 'off'); assert.equal(changed.state, 'paused'); assert.deepEqual(changed.groups, [20001]); assert.deepEqual(changed.adminQQs, [10001]);
+  const invalidEffort = spawnSync(process.execPath, ['scripts/admin.mjs', 'role.update', JSON.stringify({ id: configured.id, expectedRevision: changed.revision, patch: { reasoningEffort: 'unsupported-kw-effort' } })], { encoding: 'utf8', timeout: 10000 });
+  assert.notEqual(invalidEffort.status, 0); assert.equal(admin('role.read', { roleId: configured.id }).revision, changed.revision);
   if (process.env.KW_TEST_SCHEMA) { assert.equal(admin('role.read', { roleId: 'legacy-image' }).state, 'disabled'); assert.ok((await readdir('/data/kwagent')).some(name => name.includes(`.schema${process.env.KW_TEST_SCHEMA}-`))); }
   const role = admin('role.create', { id: 'image-smoke', accountId: 'main', name: '镜像验证', initialPersona: '仅保存本地构建验证记录。', provider: 'deepseek-official', model: 'configured-at-deployment', preinjectSkills: ['kwagent-life', 'lagrange'], adminQQs: [10001] });
   assert.equal(role.state, 'disabled');
@@ -71,6 +78,7 @@ try {
   const restoredPython = spawnSync('/data/tmp/image-restored/python/.venv/bin/python', ['-c', 'import sys; from playwright.sync_api import sync_playwright; assert sys.prefix == "/data/tmp/image-restored/python/.venv"'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(restoredPython.status, 0, restoredPython.stderr);
   const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
+  assert.equal(store.role('image-reasoning').reasoningEffort, 'off'); assert.equal(store.role('image-reasoning').state, 'paused');
   try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.deepEqual(store.role(role.id).preinjectSkills, role.preinjectSkills); assert.deepEqual(store.role(role.id).adminQQs, role.adminQQs); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
   admin('shutdown');
   const result = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error('Harness 未在期限内停止'); })]); assert.equal(result[0], 0);

@@ -42,6 +42,7 @@ description: 通过 Lagrange MCP 使用 QQ：先读取消息片段的 type/data 
 - `type` 是片段类型字符串，如 `text`、`mention`、`reply`、`image`。
 - `data` 是对应类型的字段对象；普通文字放在 `data.text`，图片地址放在 `data.uri`。
 - `message` 必须是对象数组，直接作为工具参数提交。正文是字符串，整个片段或数组保持 JSON 结构。
+- 当前 Schema 中 `required` 字段必须存在，允许 `null` 表示可以填写空值。图片包含 `summary:null` 或真实摘要；视频包含 `thumb_uri:null` 或真实封面地址；转发包含 `title`、`preview`、`summary`、`prompt`，没有设置时分别填写 `null`。嵌套片段遵循相同要求。
 
 下面是组装方法，`event` 来自当前真实群消息，`replyText` 是准备发送的普通文字。将 `args` 对象作为群消息工具参数：
 
@@ -75,7 +76,7 @@ const args = {
 
 容器生成的媒体通过 `media_prepare` 转换成 Lagrange 能访问的地址，使用有效签名地址或 `base64://`。`file://` 的读取位置是 Lagrange 所在机器。普通消息发送无需管理员授权；群管理、账号资料或其他重要操作应依据真实发送者、角色管理员配置和明确请求判断。
 
-感知中的图片、语音、视频只提供已知附件信息。需要理解时主动使用 `media_inspect`；附件尚未登记时先通过 `media_prepare` 使用真实 `resourceId`。未读取的引用、转发及附件会标记读取入口。大型内容返回 `payloadId`、预览及来源，使用 `payload_read` 的 `id` 和 `nextCursor` 分页读取。人格中的表达示例用于风格，不代表发生过的事情。
+感知中的图片、语音、视频只提供已知附件信息。需要理解时使用 `media_inspect({mediaId})`，标识取自已登记附件的 `id` 或 `media_prepare` 返回的 `media.id`。附件尚未登记时先通过 `media_prepare({resourceId,eventId})` 使用真实资源与来源；本地文件使用 `media_prepare({uri:实际绝对路径})`。未读取的引用、转发及附件会标记读取入口。大型内容返回 `payloadId`、预览及来源，使用 `payload_read` 的 `id` 和 `nextCursor` 分页读取。人格中的表达示例用于风格，不代表发生过的事情。
 
 ## 工具结果
 

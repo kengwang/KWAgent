@@ -12,6 +12,14 @@ KWAgent 容器中的本地路径需要通过 `media_prepare` 发布。裸路径�
 
 `media_prepare` 可以登记当前角色工作目录中的文件，或者下载已有 HTTP 资源。传入真实 `resourceId` 会查询新的资源地址再保存。较大内容使用签名 URL，小型内容可以选择 Base64。
 
+```typescript
+const prepared = await tools.media_prepare({ uri: actualWorkspacePath, mode: 'url' });
+// prepared.uri 用于发送；prepared.media.id 用于理解或再次准备。
+const analysis = await tools.media_inspect({ mediaId: prepared.media.id });
+```
+
+`actualWorkspacePath` 使用当前角色工作目录中实际存在的绝对路径；传入字段是 `uri`。接收附件使用 `media_prepare({resourceId: segment.metadata.resource_id, eventId: event.sourceId})`，或直接使用感知提供的 `prepare.arguments`。已经登记的附件使用 `media_inspect({mediaId: media.id})`，也可以直接使用感知提供的 `inspect.arguments`。每次读取结果后再取得下一步标识，参数错误时读取当前 Schema，避免循环尝试不同字段名。
+
 ## 接收资源
 
 使用 `get_resource_temp_url({resource_id})` 刷新资源地址，成功结果为 `{url}`。
@@ -24,7 +32,7 @@ KWAgent 容器中的本地路径需要通过 `media_prepare` 发布。裸路径�
 
 ## 图片
 
-`image.data`：`{uri,sub_type?:"normal"|"sticker",summary?:string}`。
+`image.data`：`{uri,summary:string|null,sub_type?:"normal"|"sticker"}`。当前远端 Schema 要求提供 `summary` 字段；没有自定义摘要时填写 `summary:null`。
 
 可以与普通文字组合。当前 outgoing image 没有闪照发送字段。
 
@@ -38,7 +46,7 @@ KWAgent 容器中的本地路径需要通过 `media_prepare` 发布。裸路径�
 
 ## 视频
 
-`video.data`：`{uri,thumb_uri?:string}`。`thumb_uri` 为封面资源。
+`video.data`：`{uri,thumb_uri:string|null}`。当前远端 Schema 要求提供 `thumb_uri` 字段；没有自定义封面时填写 `thumb_uri:null`。
 
 未提供封面时实现使用内置图片，不会自动截取视频画面。需要明确封面时自行生成并准备资源。
 

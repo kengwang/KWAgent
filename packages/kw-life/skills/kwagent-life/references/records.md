@@ -39,7 +39,32 @@ const request = {
 | `people` | 真实账号标识的字符串；昵称写正文或人物别名 |
 | `context` | `{"scene":"group"或"private","peerId":真实会话对象}` |
 
-`memory_revise` 创建新记忆时 `expectedRevision=null`，`memory.id` 可以省略或为 null；修改使用已有记忆 ID 和 revision。`epistemic` 按内容选择 `observed`、`reported`、`inferred` 或 `fictional`。判断一群人是否只想测试工具属于推测，不由成员名单或公告直接证明。
+## 长期记忆
+
+`memory_revise` 的顶层字段是 `memory`、`expectedRevision`、`reason`。创建新记忆使用完整对象：
+
+```javascript
+const saved = await tools.memory_revise({
+  expectedRevision: null,
+  reason: note,
+  memory: {
+    kind: "episode",
+    title: memoryTitle,
+    content: observedText,
+    realm: sceneRealm,
+    epistemic: "observed",
+    sources: eventIds,
+    people: personIds,
+    aliases: [],
+  },
+});
+```
+
+`memoryTitle`、`observedText`、`sceneRealm`、`eventIds`、`personIds` 来自本次实际经历。`kind` 只能使用 `episode/self/person/relationship/world/promise/focus`。`epistemic` 按内容选择 `observed`、`reported`、`inferred` 或 `fictional`。判断一群人是否只想测试工具属于推测，不由成员名单或公告直接证明。
+
+创建时 `memory.id` 可以省略或为 null，`expectedRevision` 必须为 null。修改先读取原记忆，提交完整 `memory`、原记忆 `id` 与正整数 `revision`。`continuity_revise` 的 `data` 用于连续性记录，长期记忆使用上面的 `memory` 结构。
+
+`sources` 使用感知中真实的 `sourceId`、工具结果中明确提供的来源事件标识，或 `operation_read` 返回的操作 `id`。查阅发送回执时，可以用 `operation_read({})` 获取实际操作标识与状态。当前上下文未提供来源时先查询核实；工具调用编号、Session 编号、媒体编号、负载编号和自行生成的 UUID 均不能作为来源。初始化事件只证明初始化内容。
 
 `memory_read({id: eventId, source:"event"})` 可以核对已有原始经历。工具 `callId` 关联执行过程，不能替代来源事件 ID。
 

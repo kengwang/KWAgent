@@ -16,7 +16,7 @@ const toolList = z.object({ tools: z.array(milkyToolSchema), nextCursor: z.strin
 const milkyResponse = z.object({ status: z.string(), retcode: z.number(), message: z.string().nullable().optional(), data: jsonSchema.optional() });
 export const messageSendTools = new Set(['send_group_message', 'send_private_message', 'send_temp_message']);
 export const markdownUnsupported = '当前 Lagrange 接入不支持 Markdown 消息发送，包括合并转发中的 Markdown 片段。请使用 text 片段发送普通文字。';
-export const messageFormatGuidance = '发送前读取当前 lagrange Skill。message 是片段对象数组，每个片段先写 type 再写 data，data 为对应字段对象，嵌套转发的 segments 同样处理。';
+export const messageFormatGuidance = '发送前读取当前 lagrange Skill。message 是片段对象数组，每个片段先写 type 再写 data。required 字段即使允许 null 也必须提供：image.data.summary、video.data.thumb_uri 和 forward.data 的 title/preview/summary/prompt 未设置时填写 null；嵌套转发的 segments 同样处理。';
 
 /** System.Text.Json 的多态绑定要求 type 判别字段先于普通字段。 */
 export function mcpArguments(args: Record<string, unknown>): Record<string, unknown> {

@@ -1,7 +1,7 @@
 import { Context, Service } from '@deepseek-ai/cordis';
 import { installModelSelection } from '@deepseek-ai/dsh-agent';
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent';
-import { MessageId, isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
+import { MessageId, ReasoningEffortId, isAgentLoopRequest } from '@deepseek-ai/dsh-llm';
 import { estimateContent, estimateMessage, estimateToolsTokens, ROLE_OVERHEAD } from '@deepseek-ai/dsh-token-meter/estimate';
 import type { UserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId, appendPluginRecord } from '@deepseek-ai/dsh-session';
@@ -47,6 +47,10 @@ declare module '@deepseek-ai/dsh-llm/message' { interface MessageSourceMap { 'kw
 declare module '@deepseek-ai/dsh-session' { interface PluginRecordMap { 'plugin:kwagent/context': Json; 'plugin:kwagent/payload': Json } }
 
 interface RoleRuntime { state: string; error: string | null; lastActivityAt: string | null }
+
+function roleModel(role: Pick<Role, 'provider' | 'model'> & { reasoningEffort?: string | null }) {
+  return { provider: role.provider, model: role.model, ...role.reasoningEffort == null ? {} : { reasoningEffort: ReasoningEffortId(role.reasoningEffort) } };
+}
 
 /** 一个角色拥有一个长期 Agent，事件、计划、Panel 和维护命令共享状态控制。 */
 export class Life extends Service {
@@ -132,9 +136,19 @@ export class Life extends Service {
       } else await this.plans.reconcileRole(role.id);
     }
   }
-  create(input: RoleInput): Role {
+  async reasoningOptions(provider: string, model: string) {
+    const info = await this.ctx.llm.resolveModelInfo(provider, model);
+    return { efforts: info.reasoning?.efforts.map(effort => ({ id: String(effort.id), name: effort.name })) ?? [], defaultEffort: info.reasoning?.defaultEffort ?? null };
+  }
+  private async validateReasoning(role: Pick<Role, 'provider' | 'model'> & { reasoningEffort?: string | null }): Promise<void> {
+    if (role.reasoningEffort == null) return;
+    const supported = await this.reasoningOptions(role.provider, role.model);
+    if (!supported.efforts.some(effort => effort.id === role.reasoningEffort)) throw new Error(`模型 ${role.provider}/${role.model} 不支持推理等级 ${role.reasoningEffort}；可选：${supported.efforts.map(effort => effort.id).join('、') || '跟随提供商默认值'}`);
+  }
+  async create(input: RoleInput): Promise<Role> {
     const parsed = roleInputSchema.parse(input);
     if (parsed.accountId !== 'main') throw new Error('当前 Milky 连接的账号标识为 main');
+    await this.validateReasoning(parsed);
     const role = this.store.createRole({ ...parsed, memoryTokens: parsed.memoryTokens ?? this.config.memoryTokens });
     if (role.state === 'active') this.track(this.control(role.id, 'active', false), role.id);
     return role;
@@ -158,10 +172,11 @@ export class Life extends Service {
   async update(id: string, patch: Partial<Role>, expected: number): Promise<Role> {
     this.lifecycle.assertAvailable(id);
     const previous = this.store.role(id);
+    if ('reasoningEffort' in patch || patch.provider !== undefined || patch.model !== undefined) await this.validateReasoning({ ...previous, ...patch });
     const role = this.store.updateRole(id, { ...patch, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
     if (role.state !== previous.state) await this.control(id, role.state, false);
     const agent = this.handles.get(id)?.agent;
-    if (agent && (role.provider !== previous.provider || role.model !== previous.model)) agent.model.select({ provider: role.provider, model: role.model });
+    if (agent && (role.provider !== previous.provider || role.model !== previous.model || 'reasoningEffort' in patch)) agent.model.select(roleModel(role));
     return this.store.role(id);
   }
   async control(roleId: string, state: Role['state'], save = true): Promise<Role> {
@@ -210,7 +225,7 @@ export class Life extends Service {
   async prepareEmptySession(role: Role): Promise<void> {
     if (await this.ctx.sessionPersistence.stat(SessionId(role.sessionId))) return;
     const cwd = join(this.config.dataRoot, 'workspaces', role.id); await mkdir(cwd, { recursive: true });
-    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: { provider: role.provider, model: role.model } });
+    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: roleModel(role) });
     try { await this.sessions.flush(handle.agent.session); } finally { await handle.dispose(); }
   }
   async retireRole(roleId: string): Promise<void> {
@@ -364,13 +379,13 @@ export class Life extends Service {
       if (this.store.role(roleId).state === 'active' && !this.maintenance) await this.extensions.restore(roleId, agentCtx);
     };
     const exists = await this.ctx.sessionPersistence.stat(SessionId(role.sessionId));
-    const agentOptions = { provider: role.provider, model: role.model };
+    const agentOptions = roleModel(role);
     const handle = exists
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'kwagent' }, agentOptions, setup });
     this.handles.set(roleId, handle);
     const currentRole = this.store.role(roleId);
-    if (currentRole.provider !== role.provider || currentRole.model !== role.model) handle.agent.model.select({ provider: currentRole.provider, model: currentRole.model });
+    if (currentRole.provider !== role.provider || currentRole.model !== role.model || currentRole.reasoningEffort !== role.reasoningEffort || currentRole.reasoningEffort !== null) handle.agent.model.select(roleModel(currentRole));
     if (currentRole.state !== 'active' || this.maintenance) await this.extensions.suspend(roleId);
     const recovered = await this.ctx.sessionQuery.readSession(SessionId(role.sessionId));
     this.activities.restore(roleId, recovered.events);

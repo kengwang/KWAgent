@@ -1,5 +1,13 @@
 # 验收记录
 
+## v0.6.2
+
+56 项自动测试通过。实际 Harness、浏览器与模型验收确认通过角色页面选择的 `high`、`low`、`off` 依次出现在真实前台请求中，恢复默认值后生效为提供商的 `medium`。运行中保存保留启用状态、绑定和其他字段；不支持的档位保存失败且不改变版本；编辑冲突保留选择。
+
+关闭并恢复同一 Session 后，实际请求继续使用角色保存的 `high`。桌面与窄屏检查、模型请求记录和结果位于忽略目录 `.artifacts/browser/role-reasoning-*.png`、`.artifacts/verification/role-reasoning.json`。全部工具由隔离验收守卫拒绝执行，没有 QQ 或空间发送测试。
+
+使用生产图片发送的原始失败参数和当时实际发现的远端 Schema 只读复现：缺少 `message[3].data.summary` 时校验失败，补充 `summary:null` 后校验成功，没有执行远端发送。记录位于 `.artifacts/verification/production-image-schema.log`。真实 SQLite 和磁盘媒体测试验证感知提供 `media_prepare`、`media_inspect` 的具体参数，并保留已固定的批次与角色归属。
+
 ## v0.6.1
 
 55 项自动检查通过。共享 Python 的实际容器验收确认并行准备返回同一个 `/data/python/.venv/bin/python`，通过 uv 安装的包可以从不同角色工作目录导入，已有包在再次准备和断网重建后保留。Chromium 的页面操作、下载、截图、Cookie 与 localStorage 恢复通过。

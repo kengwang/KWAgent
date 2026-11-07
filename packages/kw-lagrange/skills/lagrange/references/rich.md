@@ -23,6 +23,8 @@ const forward = {
 
 节点字段为 `user_id`、`sender_name`、`segments` 和可选 `message_style`。节点时间由服务器生成。不要加入不存在的 `time` 或 `avatar_url` 参数。
 
+当前远端 Schema 要求 `title`、`preview`、`summary`、`prompt` 四个字段都存在，未设置的字段填写 `null`。嵌套图片的 `summary` 和视频的 `thumb_uri` 同样保留，没有设置时填写 `null`。
+
 `segments` 中的每个对象仍须先写 `type` 再写 `data`，所有嵌套层都遵循同一结构。卡片的 `json_payload`、按钮的字符串载荷和 XML 保留各自原始内容。
 
 可以嵌套转发。媒体准备按实际接收会话执行，任一节点准备失败会终止整次发送并返回位置说明。

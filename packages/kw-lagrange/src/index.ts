@@ -104,13 +104,13 @@ export class Lagrange extends Service {
       });
       ctx.tools.register(definition);
     }
-    registerTool(ctx, 'media_prepare', '登记当前角色的媒体，并生成远程 Lagrange 可访问的发送 URI。resourceId 会查询新的资源地址。', z.object({ mediaId: z.string().optional(), uri: z.string().optional(), resourceId: z.string().optional(), name: z.string().optional(), eventId: z.string().optional(), mode: z.enum(['url', 'base64']).default('url') }), async (input, exec) => {
+    registerTool(ctx, 'media_prepare', '登记媒体并生成远程 Lagrange 可访问的 uri。本地文件传 {uri:当前角色工作目录中的真实绝对路径}；收到的资源传 {resourceId,eventId}。返回 media.id 供 media_inspect({mediaId:结果.media.id}) 使用，返回 uri 供发送使用。', z.object({ mediaId: z.string().optional(), uri: z.string().describe('实际本地绝对路径或支持的媒体 URI').optional(), resourceId: z.string().describe('接收附件中的真实 resource_id').optional(), name: z.string().optional(), eventId: z.string().describe('原始经历的 sourceId').optional(), mode: z.enum(['url', 'base64']).default('url') }).refine(input => !!(input.mediaId || input.uri || input.resourceId), '需要提供 mediaId、resourceId 或 uri；本地文件使用 {uri:实际绝对路径}'), async (input, exec) => {
       const uri = input.resourceId ? await this.media.resourceUrl(input.resourceId, exec.signal) : input.uri;
       const media = input.mediaId ? this.media.store.media(input.mediaId) : uri ? await this.media.import(roleId, uri, input.name, input.eventId, exec.signal, true) : undefined;
       if (!media) throw new Error('需要提供 mediaId、resourceId 或 uri');
       return { media, ...await this.media.prepare(roleId, media.id, input.mode) };
     });
-    registerTool(ctx, 'media_inspect', '理解图片、语音、视频或文档，读取结果会保存为带来源的经历。', z.object({ mediaId: z.string(), prompt: z.string().optional(), action: z.enum(['inspect', 'extract_audio']).default('inspect') }), (input, exec) => input.action === 'extract_audio' ? this.media.extractAudio(roleId, input.mediaId, exec.signal) : this.media.inspect(roleId, input.mediaId, input.prompt, exec.signal));
+    registerTool(ctx, 'media_inspect', '理解已登记的图片、语音、视频或文档。必填 mediaId 来自感知 media[].id 或 media_prepare 返回的 media.id。尚未登记时先调用 media_prepare({resourceId,eventId}) 或 media_prepare({uri})，读取返回结果再调用本工具。', z.object({ mediaId: z.string().describe('已登记媒体的 id；取自 media_prepare 返回的 media.id 或感知 media[].id'), prompt: z.string().optional(), action: z.enum(['inspect', 'extract_audio']).default('inspect') }), (input, exec) => input.action === 'extract_audio' ? this.media.extractAudio(roleId, input.mediaId, exec.signal) : this.media.inspect(roleId, input.mediaId, input.prompt, exec.signal));
   }
   socialContext(roleId: string, contexts: { scene: 'group' | 'private'; peerId: number }[]) {
     const since = this.media.store.meta(`context-since-time:${roleId}`);

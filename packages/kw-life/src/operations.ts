@@ -6,7 +6,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check } from 'proper-lockfile';
 import { z } from 'zod';
-import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema } from '@kwagent/core';
+import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, rolePatchSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema } from '@kwagent/core';
 import type { Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { planRequestSchema } from './plans.ts';
@@ -48,10 +48,16 @@ export class Operations {
     switch (action) {
       case 'status': return life.snapshot(typeof value === 'object' && value !== null && 'roleId' in value && typeof value.roleId === 'string' ? value.roleId : undefined);
       case 'doctor': return asJson({ node: process.versions.node, bunRuntime: Boolean(process.versions.bun), database: life.store.integrity(), schema: life.store.db.prepare('PRAGMA user_version').get(), started: life.started, error: life.startupError, mcp: life.context.kwLagrange.client.status, events: life.context.kwLagrange.events.status, visionConfigured: Boolean(life.config.vision.model && life.config.vision.baseUrl) });
-      case 'role.create': return asJson(life.create(roleInputSchema.parse(value)));
-      case 'role.prepare': { const input = z.object({ id: z.string() }).parse(value); const handle = await life.ensure(input.id); const engine = life.context.agentPresets.serviceFor(handle.agent, 'compaction'); const config = (engine as unknown as { config?: { maxTokens?: number } })?.config; return asJson({ prepared: true, sessionId: handle.agent.session.id, compactionEngine: engine?.constructor.name ?? null, compactionMaxTokens: config?.maxTokens ?? null, compactionPolicy: config ?? null, modelInfo: await life.context.llm.resolveModelInfo(handle.agent.options.provider!, handle.agent.options.model!), agentMaxTokens: handle.agent.options.maxTokens ?? null }); }
+      case 'role.create': return asJson(await life.create(roleInputSchema.parse(value)));
+      case 'role.prepare': {
+        const input = z.object({ id: z.string() }).parse(value); const handle = await life.ensure(input.id);
+        const engine = life.context.agentPresets.serviceFor(handle.agent, 'compaction'); const config = (engine as unknown as { config?: { maxTokens?: number } })?.config;
+        const selection = handle.agent.model.current(); if (!selection) throw new Error('角色尚未选择模型');
+        const modelInfo = await life.context.llm.resolveModelInfo(selection.provider, selection.model);
+        return asJson({ prepared: true, sessionId: handle.agent.session.id, modelSelection: selection, configuredReasoningEffort: life.store.role(input.id).reasoningEffort, effectiveReasoningEffort: selection.reasoningEffort ?? modelInfo.reasoning?.defaultEffort ?? null, compactionEngine: engine?.constructor.name ?? null, compactionMaxTokens: config?.maxTokens ?? null, compactionPolicy: config ?? null, modelInfo, agentMaxTokens: handle.agent.options.maxTokens ?? null });
+      }
       case 'role.update': {
-        const input = z.object({ id: z.string(), expectedRevision: z.number().int(), patch: roleSchema.partial() }).parse(value);
+        const input = z.object({ id: z.string(), expectedRevision: z.number().int(), patch: rolePatchSchema }).parse(value);
         return asJson(await life.update(input.id, input.patch, input.expectedRevision));
       }
       case 'role.control': {

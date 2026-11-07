@@ -7,7 +7,7 @@ import { SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 
 export const readActions = new Set(['status', 'doctor', 'history', 'revision.read', 'events', 'memory.list', 'source.read', 'payload.read', 'payload.links', 'role.read', 'persona.read', 'activity.list', 'activity.read', 'sources.list', 'people.list', 'people.memories', 'capability.read', 'memory.read', 'memory.detail', 'records.list', 'perception.read', 'record.read', 'record.detail', 'session.read', 'session.records']);
 
-for (const action of ['continuity.list', 'continuity.read', 'skill.list']) readActions.add(action);
+for (const action of ['continuity.list', 'continuity.read', 'skill.list', 'model.reasoning']) readActions.add(action);
 
 /** 管理查询统一校验分页并只返回列表摘要，正文读取独立执行。 */
 export async function query(life: Life, action: string, value: Json): Promise<Json | undefined> {
@@ -20,6 +20,7 @@ export async function query(life: Life, action: string, value: Json): Promise<Js
     return { roleId, id, ...ref, read: 'payload.read', summary: asJson(summary(record, life.config.budgets.panelBodyBytes)), sources: Array.isArray(body.sources) ? body.sources.slice(0, 50) : Array.isArray(body.personaSources) ? body.personaSources.slice(0, 50) : Array.isArray(data.sources) ? data.sources.slice(0, 50) : [], references: asJson(refs.slice(0, 50)), referencesNextCursor: refs.length > 50 ? 50 : null };
   };
   switch (action) {
+    case 'model.reasoning': { const input = z.object({ provider: z.string().min(1), model: z.string().min(1) }).strict().parse(value); return asJson(await life.reasoningOptions(input.provider, input.model)); }
     case 'continuity.list': {
       const input = continuityQuerySchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input;
       const page = life.context.kwMind.continuity.list(roleId, request); return asJson({ ...page, items: preview(page.items.map(record => ({ ...record, kind: record.data.kind, title: record.data.title, status: record.data.status, content: record.data.content, people: record.data.people, context: record.data.context, realm: record.data.realm, expiresAt: record.data.expiresAt, read: 'continuity.read' }))) });

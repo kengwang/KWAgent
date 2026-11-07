@@ -58,6 +58,7 @@ test('感知整理保留稳定账号、引用、嵌套节点及未理解媒体�
     const normalized = JSON.parse(JSON.stringify(normalizeExperience(store, second)));
     assert.equal(normalized.sender.id, 789); assert.equal(normalized.sender.aliases[0], '同名');
     assert.equal(normalized.parts[1].sourceId, first.id); assert.equal(normalized.parts[2].state, '未理解附件或消息片段'); assert.equal(normalized.parts[3].nodes[0].parts[0].state, '未读取转发内容');
+    assert.deepEqual(normalized.parts[2].prepare, { tool: 'media_prepare', arguments: { resourceId: 'image-resource', eventId: second.id } });
     assert.equal(JSON.parse(JSON.stringify(normalizeExperience(store, missing))).parts[0].state, '原文尚未接收');
     assert.deepEqual(conversationOrder([missing, first, second]).map(event => event.id), [first.id, second.id, missing.id]);
     const payloads = new Payloads(store, join(root, 'artifacts'));

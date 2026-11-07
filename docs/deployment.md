@@ -10,6 +10,8 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 
 模型上下文容量、输出长度和自动压缩策略由 Harness 的模型目录、适配器与宿主配置解析。KWAgent 不覆盖这些 Token 参数。自定义模型没有目录条目时使用 Harness 适配器的默认能力声明；可以通过 Harness 模型设置维护接口实际提供的能力。`role.prepare` 返回生效的模型信息和继承的压缩策略。感知、记忆与工具预览预算只控制资料装配和分页，不作为模型窗口或压缩阈值。
 
+每个角色可以在“角色 → 编辑角色 → 对话推理等级”选择该模型实际声明的 reasoning effort，或跟随提供商默认值。保存从下一模型步骤生效，并在重启后保留。未配置的旧角色继续保留现有会话选择。记忆整理、检索扩展和压缩摘要沿用辅助请求的现有策略。管理命令的 `role.update` 支持 `patch.reasoningEffort`，`null` 表示恢复默认；`role.prepare` 返回配置值、当前模型选择及生效等级。
+
 `KW_DATA_ROOT` 是服务器上的持久目录。Compose 将它挂载到容器 `/data`。应用使用 UID/GID 10001；数据准备命令在停止应用时创建目录并设置权限。
 
 ## GHCR 镜像与 1Panel 网络
@@ -21,7 +23,7 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 ```dotenv
 COMPOSE_PROJECT_NAME=kwagent
 COMPOSE_FILE=compose.yml:compose.kwagent.yaml
-KW_IMAGE=ghcr.io/kengwang/kwagent:0.6.1
+KW_IMAGE=ghcr.io/kengwang/kwagent:0.6.2
 KW_DATA_ROOT=./data/agent
 KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
 ```
@@ -38,7 +40,7 @@ docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 
 反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
 
-需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.6.1` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
+需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.6.2` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
 
 `.env` 设置为 `0600`，避免把本地开发代理地址带到服务器。应用数据与已有服务分别挂载；指定 `kwagent` 服务进行拉取和启动，可保留已有服务的运行状态。
 

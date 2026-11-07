@@ -292,7 +292,7 @@ export class Mind extends Service {
       if (memory.roleId !== roleId) throw new EvidenceError('记忆属于其他角色');
       return input.source === 'history' ? this.store.history('memory', input.id) : memory;
     }));
-    registerTool(ctx, 'memory_revise', '保存、修订或归档记忆。来源必须指向实际经历，人物 people 使用实际 QQ 账号字符串，昵称保存到 aliases。修订需要当前 expectedRevision。', z.object({ memory: memoryInputSchema.omit({ roleId: true }), expectedRevision: z.number().int().positive().nullable(), reason: z.string().min(1) }), (input, exec) => this.revise({ ...input.memory, roleId }, input.expectedRevision, roleId, input.reason, exec.signal));
+    registerTool(ctx, 'memory_revise', '保存完整长期记忆，顶层为 {memory,expectedRevision,reason}。创建 expectedRevision=null、memory.id省略；修改先读取原记忆并提交其id和正整数revision。memory.kind为episode/self/person/relationship/world/promise/focus；sources取真实sourceId或operation_read返回的操作id，people使用QQ账号字符串。完整示例见kwagent-life/references/records.md。', z.object({ memory: memoryInputSchema.omit({ roleId: true }), expectedRevision: z.number().int().positive().nullable().describe('创建为 null；修改为读取到的当前正整数 revision'), reason: z.string().min(1) }), (input, exec) => this.revise({ ...input.memory, roleId }, input.expectedRevision, roleId, input.reason, exec.signal));
     ctx.systemPrompt.section({ name: 'deployment:persona-prefix', order: 0, interpolate: false, text: () => { const frozen = this.steps.get(roleId); return frozen ? JSON.parse(frozen).role.persona : this.store.role(roleId).persona; } });
     ctx.systemPrompt.section({ name: 'deployment:persona-suffix', order: 10200, interpolate: false, text: '你有自己的兴趣、关系和持续目标，自主决定关注、行动和休息。群聊与私聊是你经历的事件。对外交流通过 Lagrange 工具完成，内部活动可以保持安静。使用 life_plan 管理目标和下一次活动。工具执行结果需要实际核实。认识他人和世界时区分事实、转述、推测和剧情。' });
   }
