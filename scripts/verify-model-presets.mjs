@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { loadEnvFile } from 'node:process';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { openSync, closeSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+import sharp from 'sharp';
+
+loadEnvFile('.env');
+const root = resolve('.artifacts/model-presets', String(Date.now())), port = 3111;
+await mkdir(root, { recursive: true });
+const env = { ...process.env, KW_DATA_ROOT: root, DSH_HOME: join(root, 'dsh'), KW_HOST_PORT: String(port), KW_PUBLIC_URL: `http://127.0.0.1:${port}/`, KW_CONTAINER: 'false', KW_BACKUP_ENABLED: 'false', KW_ASYNC_TEST: 'true', KW_EVENT_BATCH_WINDOW_MS: '10' };
+const log = openSync(join(root, 'harness.log'), 'a', 0o600); let host; let roleReady = false;
+const invoke = (action, payload = null) => spawnSync(process.execPath, ['scripts/admin.mjs', action, JSON.stringify(payload)], { env, encoding: 'utf8', timeout: 90000 });
+const admin = (action, payload = null) => { const result = invoke(action, payload); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout); };
+const refused = (action, payload, message) => { const result = invoke(action, payload); assert.notEqual(result.status, 0); assert.match(result.stderr, message); };
+async function until(check, label) { for (let i = 0; i < 600; i++) { const value = await check(); if (value) return value; await delay(300); } throw new Error(label); }
+async function start() { host = spawn(process.execPath, ['scripts/start.mjs'], { env, stdio: ['ignore', log, log] }); await until(async () => { assert.equal(host.exitCode, null); try { return (await fetch(`http://127.0.0.1:${port}/kw-health`)).ok; } catch (error) { if (error.cause?.code === 'ECONNREFUSED') return false; throw error; } }, 'Host启动超时'); }
+async function stop() { if (host?.exitCode === null) { const exit = new Promise(resolve => host.once('exit', resolve)); admin('shutdown'); await Promise.race([exit, delay(20000, undefined, { ref: false })]); assert.notEqual(host.exitCode, null); } }
+const state = async () => (await fetch(`http://127.0.0.1:${port}/kw-async-test`)).json();
+async function tool(code) { const response = await fetch(`http://127.0.0.1:${port}/kw-async-test`, { method: 'POST', body: JSON.stringify({ action: 'execute', code }) }); const value = await response.json(); assert.equal(response.ok, true, JSON.stringify(value)); return value.result.results[0].result; }
+try {
+  await start();
+  const secret = `verification-only-${randomUUID()}`;
+  const imageInput = { id: 'image-probe', name: '图片预设验收', kind: 'image', baseUrl: 'https://api.openai.com/v1', model: 'user-configured-image-model', expectedRevision: null };
+  let image = admin('model.save', { ...imageInput, apiKey: secret });
+  assert.equal(image.credentialConfigured, true); assert.ok(!JSON.stringify(image).includes(secret));
+  const first = admin('model.list', { limit: 1 }); assert.equal(first.items.length, 1); assert.equal(first.nextCursor, 1);
+  const second = admin('model.list', { cursor: first.nextCursor, limit: 1 }); assert.equal(second.items.length, 1); assert.notEqual(first.items[0].id, second.items[0].id);
+  refused('model.save', { ...imageInput, name: '冲突编辑' }, /已经更新/);
+  const { readonly: _readonly, credentialConfigured: _credential, provider: _provider, revision: _revision, createdAt: _created, updatedAt: _updated, deletedAt: _deleted, ...imageData } = image;
+  image = admin('model.save', { ...imageData, name: '图片预设已修改', expectedRevision: image.revision });
+  assert.equal(image.credentialConfigured, true);
+  const chat = admin('model.save', { id: 'chat-probe', name: '聊天预设验收', kind: 'chat', baseUrl: env.KW_CHAT_BASE_URL, model: env.KW_LLM_MODEL, protocol: 'openai-completions', thinkingFormat: 'deepseek', reasoningEffort: 'low', expectedRevision: null, apiKey: env.KW_CHAT_API_KEY });
+  admin('role.create', { id: 'async-probe', name: '模型预设验收', accountId: 'main', initialPersona: '你是内部模型配置验收角色，禁止社交发送。收到任何输入时只用一句普通文字确认，不创建计划或其他活动。', provider: env.KW_LLM_PROVIDER, model: env.KW_LLM_MODEL, chatPresetId: chat.id, imagePresetId: image.id, reasoningEffort: 'low', state: 'paused' });
+  roleReady = true;
+  let role = admin('role.read', { roleId: 'async-probe' });
+  assert.equal(role.provider, chat.provider); assert.equal(role.chatPresetId, chat.id);
+  const prepared = admin('role.prepare', { id: role.id });
+  assert.equal(prepared.modelSelection.provider, chat.provider); assert.equal(prepared.effectiveReasoningEffort, 'low');
+  refused('model.delete', { id: image.id, expectedRevision: image.revision }, /仍由角色使用/);
+  refused('role.update', { id: role.id, expectedRevision: role.revision, patch: { visionPresetId: image.id } }, /vision 类型/);
+  admin('extension', { roleId: role.id, request: { action: 'install', id: 'async-verification', spec: resolve('tests/fixtures/async-tools') } });
+  admin('extension', { roleId: role.id, request: { action: 'enable', id: 'async-verification' } });
+  await stop(); await start();
+  assert.equal(admin('model.read', { id: image.id }).credentialConfigured, true);
+  assert.ok(!(await readFile(join(root, 'kwagent/state.sqlite'))).includes(Buffer.from(secret)));
+  assert.ok((await readFile(join(root, 'dsh/.credentials.yaml'), 'utf8')).includes(secret));
+  const directory = join(root, 'workspaces', role.id);
+  await sharp({ create: { width: 24, height: 24, channels: 4, background: '#335577' } }).png().toFile(join(directory, 'input.png'));
+  await sharp({ create: { width: 12, height: 12, channels: 4, background: '#00000000' } }).png().toFile(join(directory, 'mask.png'));
+  const imported = await tool(`const image=await tools.media_prepare({uri:${JSON.stringify(join(directory, 'input.png'))}}); const mask=await tools.media_prepare({uri:${JSON.stringify(join(directory, 'mask.png'))}}); return {image:image.media.id,mask:mask.media.id};`);
+  assert.equal(imported.isError, false, JSON.stringify(imported));
+  const rejectedMask = await tool(`return await tools.image_edit({prompt:"修改背景",imageIds:[${JSON.stringify(imported.value.result.image)}],maskId:${JSON.stringify(imported.value.result.mask)}});`);
+  assert.equal(rejectedMask.isError, true); assert.match(rejectedMask.error.message, /尺寸相同/);
+  image = admin('model.save', { ...imageData, expectedRevision: image.revision, clearApiKey: true });
+  const missing = await tool('return await tools.image_generate({prompt:"生成一幅图片"});');
+  assert.equal(missing.isError, true); assert.match(missing.error.message, /尚未配置 API Key/);
+  assert.ok(!(await state()).runtime?.error);
+  admin('role.control', { id: role.id, state: 'paused' });
+  const before = (await state()).requests.length;
+  admin('role.control', { id: role.id, state: 'active' });
+  admin('event', { roleId: role.id, text: '确认当前模型预设生效。' });
+  const actual = await until(async () => { const value = await state(); assert.ok(!value.runtime?.error, value.runtime?.error); return value.requests.length > before && value.agentStatus === 'idle' ? value : undefined; }, '真实模型请求未完成');
+  assert.ok(actual.requests.slice(before).every(request => request.provider === chat.provider && request.model === chat.model && request.reasoningEffort === 'low'));
+  admin('role.control', { id: role.id, state: 'paused' });
+  const backup = admin('backup'); const restored = join(root, 'restored');
+  const restore = spawnSync(process.execPath, ['scripts/admin.mjs', 'restore', backup.directory, restored], { env, encoding: 'utf8', timeout: 120000 }); assert.equal(restore.status, 0, restore.stderr);
+  const credentials = await readFile(join(restored, 'dsh/.credentials.yaml'), 'utf8');
+  assert.ok(!credentials.includes(secret));
+  assert.ok(credentials.includes(env.KW_CHAT_API_KEY));
+  const unused = admin('model.save', { ...imageInput, id: 'unused-image', name: '待删除的独立预设' });
+  admin('model.delete', { id: unused.id, expectedRevision: unused.revision });
+  refused('model.read', { id: unused.id }, /不存在或已删除/);
+  const report = { actualHarness: true, actualModel: true, actualSQLite: true, actualCredentialStore: true, presetConflict: true, secretNotInDatabase: true, roleSelection: true, invalidMaskRejected: true, missingImageCredentialReported: true, actualImageApiSuccessTested: false, backupRestore: true, noSocialSends: true, root };
+  await writeFile('.artifacts/verification/model-presets.json', JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report));
+} finally { if (roleReady && host?.exitCode === null) admin('role.control', { id: 'async-probe', state: 'paused' }); await stop(); closeSync(log); }

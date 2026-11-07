@@ -68,6 +68,8 @@ return await tools.mcp__lagrange__send_group_message({
 
 容器提供 uv、所有角色共用的持久 Python venv 和 Python Playwright／Chromium。激活方式、安装依赖与浏览器示例见 [references/python.md](references/python.md)。当前步骤的 Python 能力说明包含实际解释器路径。
 
+角色选择的生图预设提供 `image_generate` 和 `image_edit`。生成时用 `prompt` 描述画面；编辑时用 `imageIds` 指向已经登记的真实媒体，`prompt` 描述修改，可选 `maskId` 为首图同尺寸的透明 PNG。具体参数见 [references/images.md](references/images.md)。结果返回持久媒体引用，是否检查、发送或继续修改由你自行决定。
+
 - `content` 保存正文。`memories`、`plans`、`relatedRecords` 保存已有记录的 ID，不能放自然语言句子。没有关联记录时使用空数组。
 - 新建 `id` 省略或为 null，`expectedRevision=null`；修改前读取当前记录，提交其完整 `data` 和当前 `revision`。冲突后重新读取，保留仍然适用的内容。
 - 生活记录的固定标识为 `life:当前角色ID`。`continuity_read` 查询返回记录列表；阅读某项时使用返回的实际 `id`。

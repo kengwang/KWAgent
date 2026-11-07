@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
-  asJson, CapabilityError, ConflictError, errorText, loadConfig, memoryInputSchema,
+  asJson, CapabilityError, ConflictError, errorText, loadConfig, memoryInputSchema, ModelPresets,
   now, recallSchema, registerTool, Store, Payloads, payloadReadSchema, tokens, readable, sourceChunks, continuityRequestSchema, continuityQuerySchema,
 } from '@kwagent/core';
 import type { AppConfig, Json, Memory, MemoryInput, Recall, ContinuityScene, Role } from '@kwagent/core';
@@ -41,6 +41,7 @@ export class Mind extends Service {
   readonly payloads: Payloads;
   readonly steps = new Map<string, string>();
   readonly continuity: Continuity;
+  readonly models: ModelPresets;
   private readonly consolidating = new Map<string, { task: Promise<ConsolidationOutcome>; signal?: AbortSignal }>();
   private readonly dependents = new Set<() => Promise<void>>();
   private closing?: Promise<void>;
@@ -48,6 +49,7 @@ export class Mind extends Service {
   constructor(ctx: Context, readonly config: AppConfig) {
     super(ctx, 'kwMind');
     this.store = new Store(join(config.dataRoot, 'kwagent', 'state.sqlite'));
+    this.models = new ModelPresets(ctx, this.store, config);
     this.payloads = new Payloads(this.store, join(config.dataRoot, 'artifacts'));
     this.continuity = new Continuity(this.store, this.payloads, config);
     const mind = this;
@@ -72,7 +74,7 @@ export class Mind extends Service {
     const textMatches = this.store.lexical(query);
     if (!query.semantic || !query.query) return textMatches.slice(0, query.limit);
     if (!this.store.memories(query.roleId, 1).length) return [];
-    const role = this.store.role(query.roleId);
+    const role = this.models.effective(this.store.role(query.roleId));
     const reasoningEffort = await this.auxiliaryEffort(role, signal);
     const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query, reasoningEffort: reasoningEffort ?? null });
     const assembler = new BlockAssembler();
@@ -118,7 +120,7 @@ export class Mind extends Service {
   }
 
   async context(roleId: string, query: string, signal?: AbortSignal): Promise<string> {
-    const role = this.store.role(roleId);
+    const role = this.models.effective(this.store.role(roleId));
     const entries = await this.recall({ roleId, query, semantic: Boolean(query), limit: 20, archived: false }, signal);
     const fixed = this.store.memories(roleId, 100).filter(memory => ['self', 'focus', 'promise'].includes(memory.kind) && !memory.archived);
     const unique = new Map([...fixed, ...entries].map(memory => [memory.id, memory]));
@@ -135,7 +137,7 @@ export class Mind extends Service {
   }
 
   freeze(roleId: string, context: string, scene: ContinuityScene = { eventIds: [], people: [], contexts: [], planIds: [], recordIds: [], query: '' }, communication: Json[] = [], preinjectSkills: Json[] = [], identity: Json = null, authorization: Json = null, frozenRole?: Role): string {
-    const role = frozenRole ?? this.store.role(roleId);
+    const role = frozenRole ?? this.models.effective(this.store.role(roleId));
     const previous = z.object({ memories: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(context));
     const continuity = this.continuity.select(roleId, scene, Math.min(this.config.continuityTokens, Math.floor(role.memoryTokens * 0.6)));
     const memories: Memory[] = [];
@@ -180,7 +182,7 @@ export class Mind extends Service {
     for (let attempt = 0; attempt < 3; attempt++) {
       const events = this.store.unprocessed(roleId, 50).filter(event => event.seq <= upper);
       if (!events.length) return true;
-      const role = this.store.role(roleId);
+      const role = this.models.effective(this.store.role(roleId));
       const instructions = consolidationInstructions;
       const input = { role, validationFeedback: feedback, sources: [] as { id: string; part: number; total: number; payloadId: string; text: string; sourceMeaning: string }[], memories: [] as Memory[], continuity: [] as unknown[] };
       const promptTokens = tokens(instructions) + 8;
@@ -299,7 +301,7 @@ export class Mind extends Service {
 }
 
 export const name = 'kw-mind';
-export const inject = ['llm', 'tools', 'systemPrompt'];
+export const inject = ['llm', 'tools', 'systemPrompt', 'credentials', 'settings'];
 export async function apply(ctx: Context): Promise<void> {
   const config = loadConfig();
   await mkdir(join(config.dataRoot, 'kwagent'), { recursive: true });

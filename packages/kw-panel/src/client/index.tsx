@@ -15,6 +15,7 @@ import styles from './style.css?inline';
 import { RoleForm, PlanForm, RoleSkillForm } from './forms.tsx';
 import { Timeline, TaskList, EventHistory, People, CapabilityList, DetailReader, PageNotice, useRecords, type Detail } from './views.tsx';
 import { ContinuityView } from './continuity.tsx';
+import { ModelPresetsView } from './models.tsx';
 
 interface Snapshot {
   version: string; truncated: boolean;
@@ -24,7 +25,7 @@ interface Snapshot {
   connections: Record<string, { state: string; error: string | null }>; config: { vision: { model: string | null }; chat: { model: string | null; provider: string } };
 }
 type Call = (action: string, payload?: unknown) => Promise<unknown>;
-const tabs = ['活动', '角色', '记忆', '人物', '世界', '目标与安排', '能力', '运维'] as const;
+const tabs = ['活动', '角色', '模型配置', '记忆', '人物', '世界', '目标与安排', '能力', '运维'] as const;
 const stateLabels: Record<string, string> = { active: '已启用', disabled: '未启用', paused: '已暂停', stopped: '已停止', running: '正在活动', waiting: '等待中', resetting: '正在重置', deleting: '正在删除', 'management-pending': '等待管理操作恢复', error: '需要处理', quota: '已达到额度', maintenance: '维护中', 'outside-active-hours': '活动时段外' };
 
 function Panel({ ctx }: { ctx: Context }) {
@@ -104,8 +105,8 @@ function Panel({ ctx }: { ctx: Context }) {
       <footer>{snapshot ? `修订 ${snapshot.revision}` : '正在连接 Host'}<br />{snapshot?.maintenance ? '服务器维护中' : '角色自主安排活动'}</footer>
     </aside>
     <main className="kw-main">
-      <header className="kw-header"><div><h2>{role?.name ?? '全部活动'}</h2><p>{role ? `${role.worldMode === 'real' ? '现实生活' : role.worldMode === 'fictional' ? '共同虚构世界' : '现实与虚构并存'} · 今日 ${role.usage.requests} 次请求，${role.usage.tokens} Token` : '查看角色的经历、认识和自主安排'}</p></div>
-        {role && <div className="kw-actions"><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'reset', role }); }}>重置对话</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'delete', role }); }}>删除角色</Button></div>}
+      <header className="kw-header"><div><h2>{tab === '模型配置' ? '模型配置' : role?.name ?? '全部活动'}</h2><p>{tab === '模型配置' ? '管理共享预设，由各角色选择使用' : role ? `${role.worldMode === 'real' ? '现实生活' : role.worldMode === 'fictional' ? '共同虚构世界' : '现实与虚构并存'} · 今日 ${role.usage.requests} 次请求，${role.usage.tokens} Token` : '查看角色的经历、认识和自主安排'}</p></div>
+        {role && tab !== '模型配置' && <div className="kw-actions"><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'reset', role }); }}>重置对话</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'delete', role }); }}>删除角色</Button></div>}
       </header>
       {notice && <p role="status">{notice}</p>}
       {role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，群聊继续运行，空闲后重新整理。</p>}
@@ -118,7 +119,8 @@ function Panel({ ctx }: { ctx: Context }) {
       {(error || snapshot?.startupError || role?.runtime.error) && <div role="alert" className="kw-error">{error || role?.runtime.error || snapshot?.startupError}</div>}
       {editing && editing !== 'new' && currentEdit && editing.revision !== currentEdit.revision && <div role="alert" className="kw-error"><p>角色已经更新，输入内容已保留。当前人格：</p><p className="kw-prose">{currentEdit.persona}</p><Button onClick={() => editRole(currentEdit.id)}>读取当前版本</Button></div>}
       {tab === '目标与安排' && editingPlan && currentPlan && editingPlan.revision !== currentPlan.revision && <div role="alert" className="kw-error"><p>事项已经更新，输入内容已保留。当前内容：{currentPlan.instruction}</p><Button onClick={() => editPlan(currentPlan.id, currentPlan.roleId)}>读取当前事项版本</Button></div>}
-      {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} busy={busy} call={call} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
+      {!snapshot ? <p role="status">正在读取状态…</p> : editing ? <RoleForm key={editing === 'new' ? 'new' : `${editing.id}:${editing.revision}`} initial={editing === 'new' ? undefined : editing} config={snapshot.config.chat} revision={snapshot.revision} busy={busy} call={call} onCancel={() => setEditing(null)} onSave={async value => { await call(editing === 'new' ? 'role.create' : 'role.update', editing === 'new' ? value : { id: editing.id, expectedRevision: editing.revision, patch: value }); setEditing(null); }} /> : <section className="kw-content">
+        {tab === '模型配置' && <ModelPresetsView revision={snapshot.revision} call={call} />}
         {tab === '活动' && <><EventInput roleId={roleId} call={call} /><TaskList roleId={roleId} revision={snapshot.revision} call={call} open={open} /><Timeline roleId={roleId} revision={snapshot.revision} call={call} open={open} /><EventHistory roleId={roleId} revision={snapshot.revision} call={call} open={open} unassigned={setDetail} /></>}
         {tab === '角色' && (role ? <><div className="kw-section-head"><h3>当前人格</h3><Button onClick={() => editRole(role.id)}>编辑角色</Button></div><p className="kw-prose">{role.persona}</p><h3>初始设定</h3><p className="kw-prose">{role.initialPersona}</p><h3>自我状态</h3><p>{role.selfState || '尚未形成当前状态。'}</p><h3>表达示例</h3><p className="kw-muted">仅作为表达风格，不作为真实经历。</p>{role.expressionExamples.map((example, index) => <p className="kw-prose" key={index}>{example}</p>)}<h3>会话归属</h3><p>群聊：{role.globalGroups ? '账号全局共享' : role.groups.join('、') || '尚未绑定'}；私聊：{role.defaultPrivate ? '账号默认角色' : role.contacts.join('、') || '按联系人绑定'}</p><Button onClick={() => open('history', { entity: 'role', id: role.id })}>查看人格修订</Button><Button onClick={() => open('persona.read', { roleId })}>读取完整人格</Button></> : <Empty text="选择或创建一个角色来编辑人格与会话归属。" />)}
         {tab === '角色' && <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['life', 'expression', 'reflection']} />}
@@ -141,7 +143,7 @@ function Panel({ ctx }: { ctx: Context }) {
           {planPage.nextCursor !== null && <Button onClick={planPage.more}>读取更多事项</Button>}
         </>}
         {tab === '能力' && <>
-          <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>视觉：{snapshot.config.vision.model ?? '尚未配置'}</p><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
+          <h3>连接</h3>{Object.entries(snapshot.connections).map(([name, value]) => <p key={name}>{name}：{value.state}{value.error ? ` · ${value.error}` : ''}</p>)}<h3>模型</h3><p>聊天、视觉和生图接口在模型配置中统一管理，角色分别选择预设。</p><Button onClick={() => setTab('模型配置')}>管理模型预设</Button><p>记忆检索：SQLite FTS5、人物关联、时间及当前模型的查询扩展</p>
           <CapabilityList revision={snapshot.revision} call={call} open={open} /><h3>自主扩展</h3><ExtensionForm roleId={roleId} call={call} />
           {role && <RoleSkillForm key={role.id} roleId={role.id} revision={role.revision} call={call} />}
           <PageNotice page={extensionPage} />

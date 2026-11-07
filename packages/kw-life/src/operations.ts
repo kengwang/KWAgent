@@ -6,7 +6,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check } from 'proper-lockfile';
 import { z } from 'zod';
-import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, rolePatchSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema } from '@kwagent/core';
+import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, rolePatchSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema, modelPresetWriteSchema } from '@kwagent/core';
 import type { Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { planRequestSchema } from './plans.ts';
@@ -46,6 +46,8 @@ export class Operations {
     if (life.maintenance && !readActions.has(action) && !['resume', 'backup', 'quiesce', 'shutdown'].includes(action)) throw new Error('应用正在维护，管理修改暂时停止');
     const result = await query(life, action, value); if (result !== undefined) return result;
     switch (action) {
+      case 'model.save': { const preset = await life.context.kwMind.models.save(modelPresetWriteSchema.parse(value)); life.refreshPresetModels(preset.id); return asJson(preset); }
+      case 'model.delete': { const input = z.object({ id: z.string(), expectedRevision: z.number().int().positive() }).strict().parse(value); return asJson(await life.context.kwMind.models.remove(input.id, input.expectedRevision)); }
       case 'task.cancel': { const input = z.object({ roleId: z.string(), id: z.string() }).strict().parse(value); return asJson(life.tasks.cancel(input.roleId, input.id)); }
       case 'status': return life.snapshot(typeof value === 'object' && value !== null && 'roleId' in value && typeof value.roleId === 'string' ? value.roleId : undefined);
       case 'doctor': return asJson({ node: process.versions.node, bunRuntime: Boolean(process.versions.bun), database: life.store.integrity(), schema: life.store.db.prepare('PRAGMA user_version').get(), started: life.started, error: life.startupError, mcp: life.context.kwLagrange.client.status, events: life.context.kwLagrange.events.status, visionConfigured: Boolean(life.config.vision.model && life.config.vision.baseUrl) });

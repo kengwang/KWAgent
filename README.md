@@ -42,6 +42,8 @@ node scripts/verify-docker.mjs kwagent:verification
 
 实际验收结果和外部条件见 [验收记录](docs/verification.md)。
 
+v0.8.0 增加独立的模型配置页面和角色模型预设选择，并提供 `image_generate`、`image_edit` 工具。接口地址、Key 和模型名称由管理者填写，图片与完整响应持久保存。配置方法见 [模型与图片工具](docs/models.md)。`node scripts/verify-model-presets.mjs` 使用隔离的真实 Harness 检查预设、凭据、角色选择、模型请求和恢复，禁止社交发送；实际生图成功验收需要另行配置可用接口。
+
 v0.6.2 在角色编辑页提供独立的对话推理等级，显示所选模型实际支持的档位，支持恢复提供商默认值、运行中修改及重启恢复。
 
 v0.7.0 支持整段 `run_code` 异步执行：显式选择后台或等待五秒自动转换。结果作为新的持久事件送达，角色可以先继续交流。活动页面提供任务详情和取消入口，暂停角色同时取消任务。

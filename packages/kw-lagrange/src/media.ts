@@ -12,14 +12,14 @@ import sharp from 'sharp';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import { asJson, CapabilityError, errorText, now, mediaSchema, downloadResource } from '@kwagent/core';
-import type { AppConfig, Experience, Json, Media, Store } from '@kwagent/core';
+import type { AppConfig, Experience, Json, Media, Store, ModelPresets } from '@kwagent/core';
 import { z } from 'zod';
 import type { MilkyClient } from './client.ts';
 
 /** 媒体 Module 只发布已经登记的内容，并保存每次理解结果。 */
 export class MediaModule {
   private readonly key: string;
-  constructor(readonly store: Store, readonly config: AppConfig, readonly milky: MilkyClient) {
+  constructor(readonly store: Store, readonly config: AppConfig, readonly milky: MilkyClient, readonly models?: ModelPresets) {
     const existing = store.meta('media-signing-key');
     this.key = existing ?? randomBytes(32).toString('hex');
     if (!existing) store.setMeta('media-signing-key', this.key);
@@ -195,9 +195,10 @@ export class MediaModule {
     return this.import(roleId, pathToFileURL(output).href, 'audio.wav', media.eventId ?? undefined, signal);
   }
   private async describeImage(roleId: string, bytes: Buffer, prompt: string, signal?: AbortSignal): Promise<string> {
-    const config = this.config.vision;
+    const selected = await this.models?.connection(roleId, 'vision');
+    const config = selected ? { baseUrl: selected.preset.baseUrl, model: selected.preset.model, apiKey: selected.apiKey } : this.config.vision;
     if (!config.baseUrl || !config.model) throw new CapabilityError('请配置支持图片输入的聊天模型，或设置 KW_VISION_BASE_URL 和 KW_VISION_MODEL');
-    const client = new OpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey ?? '', maxRetries: 0 });
+    const client = new OpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey ?? '', maxRetries: 0, ...selected ? { timeout: selected.preset.timeoutMs } : {} });
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: this.config.timeZone }).format(new Date());
     this.store.addUsage(roleId, day, 0);
     const response = await client.chat.completions.create({ model: config.model, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${bytes.toString('base64')}` } }] }] }, { signal });

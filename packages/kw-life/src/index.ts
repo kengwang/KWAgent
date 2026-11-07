@@ -123,6 +123,7 @@ export class Life extends Service {
   private async initialize(): Promise<void> {
     if (this.started) return;
     await (this.presetTask ??= registerRolePreset(this.ctx));
+    await this.ctx.kwMind.models.restore();
     await this.ctx.kwLagrange.start();
     await this.tasks.recover();
     this.started = true;
@@ -150,7 +151,7 @@ export class Life extends Service {
     if (!supported.efforts.some(effort => effort.id === role.reasoningEffort)) throw new Error(`模型 ${role.provider}/${role.model} 不支持推理等级 ${role.reasoningEffort}；可选：${supported.efforts.map(effort => effort.id).join('、') || '跟随提供商默认值'}`);
   }
   async create(input: RoleInput): Promise<Role> {
-    const parsed = roleInputSchema.parse(input);
+    const parsed = this.ctx.kwMind.models.effective(roleInputSchema.parse(input));
     if (parsed.accountId !== 'main') throw new Error('当前 Milky 连接的账号标识为 main');
     await this.validateReasoning(parsed);
     const role = this.store.createRole({ ...parsed, memoryTokens: parsed.memoryTokens ?? this.config.memoryTokens });
@@ -176,12 +177,16 @@ export class Life extends Service {
   async update(id: string, patch: Partial<Role>, expected: number): Promise<Role> {
     this.lifecycle.assertAvailable(id);
     const previous = this.store.role(id);
-    if ('reasoningEffort' in patch || patch.provider !== undefined || patch.model !== undefined) await this.validateReasoning({ ...previous, ...patch });
-    const role = this.store.updateRole(id, { ...patch, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
+    const effective = this.ctx.kwMind.models.effective({ ...previous, ...patch });
+    await this.validateReasoning(effective);
+    const role = this.store.updateRole(id, { ...patch, ...patch.chatPresetId ? { provider: effective.provider, model: effective.model } : {}, ...('persona' in patch || 'selfState' in patch || 'expressionExamples' in patch ? { personaSources: [] } : {}) }, expected, 'owner', '人工修改角色');
     if (role.state !== previous.state) await this.control(id, role.state, false);
     const agent = this.handles.get(id)?.agent;
-    if (agent && (role.provider !== previous.provider || role.model !== previous.model || 'reasoningEffort' in patch)) agent.model.select(roleModel(role));
+    if (agent && (role.provider !== previous.provider || role.model !== previous.model || 'reasoningEffort' in patch || 'chatPresetId' in patch)) agent.model.select(roleModel(this.ctx.kwMind.models.effective(role)));
     return this.store.role(id);
+  }
+  refreshPresetModels(id: string): void {
+    for (const role of this.store.roles()) if (role.chatPresetId === id) this.handles.get(role.id)?.agent.model.select(roleModel(this.ctx.kwMind.models.effective(role)));
   }
   async control(roleId: string, state: Role['state'], save = true): Promise<Role> {
     this.lifecycle.assertAvailable(roleId);
@@ -230,7 +235,7 @@ export class Life extends Service {
   async prepareEmptySession(role: Role): Promise<void> {
     if (await this.ctx.sessionPersistence.stat(SessionId(role.sessionId))) return;
     const cwd = join(this.config.dataRoot, 'workspaces', role.id); await mkdir(cwd, { recursive: true });
-    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: roleModel(role) });
+    const handle = await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd, agentPreset: 'kwagent' }, agentOptions: roleModel(this.ctx.kwMind.models.effective(role)) });
     try { await this.sessions.flush(handle.agent.session); } finally { await handle.dispose(); }
   }
   async retireRole(roleId: string): Promise<void> {
@@ -258,7 +263,7 @@ export class Life extends Service {
   }
   private async createAgent(roleId: string): Promise<AgentHandle> {
     await (this.presetTask ??= registerRolePreset(this.ctx));
-    const role = this.store.role(roleId);
+    const role = this.ctx.kwMind.models.effective(this.store.role(roleId));
     const workspace = join(this.config.dataRoot, 'workspaces', roleId);
     await mkdir(workspace, { recursive: true });
     const python = process.env.KW_CONTAINER === 'true' ? await preparePython(this.config.dataRoot) : null;
@@ -291,7 +296,7 @@ export class Life extends Service {
         const identity = await this.ctx.kwLagrange.identityContext(roleId, scene.contexts, context.signal);
         const directories = agent.ctx.get('workingDirectory'); if (!directories) throw new Error('角色工作目录服务尚未加载');
         const skills = await readPreinjectSkills(this.store, roleId, this.ctx.skills, { cwd: await directories.ensure(agent, context.signal), signal: context.signal, scope: agent });
-        const role = this.store.role(roleId); this.prepared.set(roleId, { role, skills, identity });
+        const role = this.ctx.kwMind.models.effective(this.store.role(roleId)); this.prepared.set(roleId, { role, skills, identity });
         assembly.sections = assembly.sections.map(section => section.name === 'deployment:persona-prefix' ? { ...section, text: role.persona } : section.name === 'deployment:kwagent-preinject' ? { ...section, text: skills.map(skill => (skill as { content: string }).content).join('\n\n') } : section);
         return next();
       });
@@ -396,7 +401,7 @@ export class Life extends Service {
       ? await this.ctx.agents.resume({ resumeSessionId: SessionId(role.sessionId), agentOptions, setup })
       : await this.ctx.agents.create({ sessionId: SessionId(role.sessionId), meta: { cwd: workspace, agentPreset: 'kwagent' }, agentOptions, setup });
     this.handles.set(roleId, handle);
-    const currentRole = this.store.role(roleId);
+    const currentRole = this.ctx.kwMind.models.effective(this.store.role(roleId));
     if (currentRole.provider !== role.provider || currentRole.model !== role.model || currentRole.reasoningEffort !== role.reasoningEffort || currentRole.reasoningEffort !== null) handle.agent.model.select(roleModel(currentRole));
     if (currentRole.state !== 'active' || this.maintenance) await this.extensions.suspend(roleId);
     const recovered = await this.ctx.sessionQuery.readSession(SessionId(role.sessionId));

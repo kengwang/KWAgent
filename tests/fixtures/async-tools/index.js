@@ -15,7 +15,7 @@ export function apply(ctx) {
   ctx.on('tools/pre-execute', (exec, next) => { if (exec.name === 'job_output') readQueues.push({ at: Date.now(), arguments: exec.arguments, queued: exec.agent.inbox.nextStep.some(message => message.source.kind === 'kw-event' && message.source.eventIds.some(id => life.store.event(id).type === 'background-result')) }); return next(); });
   ctx.on('llm/stream', async function* (options, next) {
     if (isAgentLoopRequest(options) && options.sessionId === life.store.role(id).sessionId) {
-      requests.push({ at: Date.now(), origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) });
+      requests.push({ at: Date.now(), provider: options.provider, model: options.model, reasoningEffort: options.reasoningEffort ?? null, origin: executionOrigin.getStore() ?? null, tools: options.tools?.map(tool => tool.name), messages: options.messages.filter(message => message.role === 'user').map(message => message.source?.kind) });
       if (process.env.KW_ASYNC_RACE_TEST === 'true' && life.tasks.list({ roleId: id, cursor: 0, limit: 200 }).items.some(task => task.mode === 'background' && task.state === 'running')) await writeFile(join(directory, 'race-release'), '真实后续模型请求已经开始');
     }
     yield* next();

@@ -19,6 +19,8 @@ export { MilkyClient, responseData, MilkyBusinessError, MilkyEndpointError, mcpA
 export { milkyId, toolConversation } from '@kwagent/core';
 export { MilkyEvents } from './events.ts';
 export { MediaModule } from './media.ts';
+export { ImagesModule, imageGenerateSchema, imageEditSchema } from './images.ts';
+import { ImagesModule, imageGenerateSchema, imageEditSchema } from './images.ts';
 export { normalizeExperience, conversationOrder, NORMALIZER_VERSION } from './perception.ts';
 declare module '@deepseek-ai/cordis' { interface Context { kwLagrange: Lagrange } }
 
@@ -27,6 +29,7 @@ export class Lagrange extends Service {
   readonly client: MilkyClient;
   readonly events: MilkyEvents;
   readonly media: MediaModule;
+  readonly images: ImagesModule;
   readonly received = new EventEmitter();
   private startup?: Promise<void>;
   private mediaQueue: Promise<void> = Promise.resolve();
@@ -44,7 +47,8 @@ export class Lagrange extends Service {
       this.mediaQueue = this.mediaQueue.then(() => this.media.receive(event, this.mediaAbort.signal));
       void this.mediaQueue.catch(error => { this.events.status.error = errorText(error); });
     });
-    this.media = new MediaModule(ctx.kwMind.store, config, this.client);
+    this.media = new MediaModule(ctx.kwMind.store, config, this.client, ctx.kwMind.models);
+    this.images = new ImagesModule(this.media, ctx.kwMind.models, ctx.kwMind.payloads);
   }
   start(): Promise<void> {
     this.startup ??= this.client.connect().then(() => {
@@ -111,6 +115,8 @@ export class Lagrange extends Service {
       return { media, ...await this.media.prepare(roleId, media.id, input.mode) };
     });
     registerTool(ctx, 'media_inspect', '理解已登记的图片、语音、视频或文档。必填 mediaId 来自感知 media[].id 或 media_prepare 返回的 media.id。尚未登记时先调用 media_prepare({resourceId,eventId}) 或 media_prepare({uri})，读取返回结果再调用本工具。', z.object({ mediaId: z.string().describe('已登记媒体的 id；取自 media_prepare 返回的 media.id 或感知 media[].id'), prompt: z.string().optional(), action: z.enum(['inspect', 'extract_audio']).default('inspect') }), (input, exec) => input.action === 'extract_audio' ? this.media.extractAudio(roleId, input.mediaId, exec.signal) : this.media.inspect(roleId, input.mediaId, input.prompt, exec.signal));
+    registerTool(ctx, 'image_generate', '使用角色选择的生图模型预设生成图片。prompt描述画面，按需指定n、size、quality等。返回持久媒体引用；生成成功不表示已经发送。耗时调用会按现有规则转入后台，不要重复提交。', imageGenerateSchema, (input, exec) => this.images.run(roleId, 'generate', input, exec.signal));
+    registerTool(ctx, 'image_edit', '使用角色选择的生图预设编辑图片。imageIds填写已登记的真实mediaId，prompt描述修改；可选maskId为首图同尺寸的透明PNG蒙版。返回新媒体，原图保留。', imageEditSchema, (input, exec) => this.images.run(roleId, 'edit', input, exec.signal));
   }
   socialContext(roleId: string, contexts: { scene: 'group' | 'private'; peerId: number }[]) {
     const since = this.media.store.meta(`context-since-time:${roleId}`);
