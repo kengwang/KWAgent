@@ -1,0 +1,4 @@
+location ^~ / {
+    add_header Retry-After 10 always;
+    return 503;
+}

@@ -18,17 +18,17 @@ Linux amd64 服务器需要 Docker 和 Compose。复制 `.env.example` 为 `.env
 
 服务器只需要 Compose 文件和自己的 `.env`。使用 `deploy/compose.1panel.yaml`，无需上传应用源码、安装 Bun 或构建镜像。该配置没有 `build` 和 `ports`，仅接入已有的外部网络 `1panel-network`。
 
-同目录已有 `compose.yml` 时，将模板保存为 `compose.kwagent.yaml`，在 `.env` 中组合两个文件：
+服务器统一使用一个 `compose.yml`。将模板中的 `kwagent` 服务和网络声明合并到该文件，保留已有 `lagrange` 等服务的配置与数据挂载。`shm_size: 1gb` 直接保存在 `kwagent` 服务定义中。
 
 ```dotenv
 COMPOSE_PROJECT_NAME=kwagent
-COMPOSE_FILE=compose.yml:compose.kwagent.yaml
+COMPOSE_FILE=compose.yml
 KW_IMAGE=ghcr.io/kengwang/kwagent:0.8.0
 KW_DATA_ROOT=./data/agent
 KW_PUBLIC_URL=https://YOUR_KWAGENT_DOMAIN/
 ```
 
-没有已有 Compose 文件时，将模板保存为 `compose.yaml`，省略 `COMPOSE_FILE`。填写模型、Milky 和凭据后，执行：
+新部署将模板保存为 `compose.yml`。填写模型、Milky 和凭据后，执行：
 
 ```sh
 docker compose --env-file .env config --quiet
@@ -38,7 +38,11 @@ docker compose --env-file .env up -d --no-build --wait kwagent
 docker compose --env-file .env exec -T kwagent node scripts/admin.mjs doctor
 ```
 
-反向代理接入同一网络，上游使用 `http://kwagent:3080`。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
+反向代理接入同一网络，上游使用 `http://kwagent:3080`。OpenResty 位于 Docker 网络时，使用 [1Panel 代理配置](../deploy/nginx.1panel.location.conf.example) 中的 Docker DNS 与变量上游，实现容器地址的动态解析。保留外部 Host、WebSocket Upgrade、查询参数和 Range 请求，支持长连接，并为 HTTPS 出口 Cookie 添加 Secure。`KW_PUBLIC_URL` 同时配置宿主的公开地址与可信 Host。
+
+每次重建后检查容器与公网两条路径。公网 `https://你的管理域名/kw-health` 应返回 HTTP 200，且 `alive`、`managementReady`、`businessReady` 均为 true。公网入口通过后才确认部署完成。只读健康检查不会发起模型请求或发送 QQ 消息。
+
+升级期间可临时使用 [维护入口](../deploy/nginx.maintenance.location.conf.example) 阻止浏览器重连；管理命令通过 Unix socket 继续工作。完成容器重建后，先检查 `doctor`，再为每个启用角色执行 `role.prepare`，确认角色已经取得当前 Session 的写入句柄，最后恢复正常代理并检查公网健康状态。此顺序保留角色的 Session，避免页面恢复会话与角色启动发生竞争。
 
 需要使用镜像加速时，在 `.env` 中把 `KW_IMAGE` 设置为 `ghcr.nju.edu.cn/kengwang/kwagent:0.8.0` 或对应的 `ghcr.1ms.run` 地址，可追加正式发布的 `@sha256:...` 固定 digest。拉取后核验镜像的版本与 `org.opencontainers.image.revision`，保持与发布标签一致。
 
