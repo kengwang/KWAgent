@@ -87,11 +87,16 @@ export type MemoryInput = z.infer<typeof memoryInputSchema>;
 export const recallSchema = z.object({
   roleId: z.string(), query: z.string().default(''), kind: memorySchema.shape.kind.optional(),
   realm: realmSchema.optional(), person: z.string().optional(), since: z.string().optional(),
-  until: z.string().optional(), limit: z.number().int().min(1).max(100).default(20),
+  until: z.string().optional(), limit: z.number().int().min(1).max(50).default(10), cursor: z.string().max(2048).optional(),
   scene: z.enum(['group', 'private']).optional(), peerId: z.number().int().positive().optional(),
   semantic: z.boolean().default(false), archived: z.boolean().default(false),
 });
 export type Recall = z.infer<typeof recallSchema>;
+export interface MemoryHit extends Pick<Memory, 'id' | 'roleId' | 'revision' | 'kind' | 'title' | 'realm' | 'epistemic' | 'createdAt' | 'updatedAt'> {
+  people: string[]; peopleCount: number; snippet: string; sourceCount: number;
+  read: { tool: 'memory_read'; arguments: { id: string } };
+}
+export interface MemorySearchPage { items: MemoryHit[]; nextCursor: string | null }
 
 export const planSchema = z.object({
   id: z.string(), roleId: z.string(), kind: z.enum(['goal', 'condition', 'time']),

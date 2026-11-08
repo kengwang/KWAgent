@@ -12,7 +12,7 @@ test('整理稳定资料放在新来源前，来源和管理修订变化不破�
     const input: ConsolidationInput = { role, memories: [], continuity: [], validationFeedback: '', sources: [{ id: 'actual-1', part: 0, total: 1, payloadId: 'reference', text: '先前的实际来源', sourceMeaning: 'reported' }] };
     const first = consolidationMessages(input);
     const second = consolidationMessages({ ...input, role: { ...role, revision: role.revision + 1, updatedAt: new Date(Date.now() + 1000).toISOString() }, sources: [{ ...input.sources[0]!, id: 'actual-2', text: '后续新的来源' }] });
-    assert.deepEqual(first[0], second[0]); assert.notDeepEqual(first[1], second[1]);
+    assert.deepEqual(first.slice(0, 2), second.slice(0, 2)); assert.notDeepEqual(first[2], second[2]);
     const event = (type: string, payload: any) => store.appendEvent({ id: randomUUID(), accountId: 'main', roleId: role.id, source: 'system', type, occurredAt: new Date().toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload }).event;
     assert.equal(hasConsolidationContent(event('tool-result', { name: 'job_output', result: { status: 'running' } })), false);
     assert.equal(hasConsolidationContent(event('internal-activity', { message: { content: [{ type: 'tool-call', name: 'run_code' }] } })), false);

@@ -41,6 +41,8 @@ const request = {
 
 ## 长期记忆
 
+先查询摘要，再按需读取。例如 `tools.memory_recall({query:searchText,person:personId,semantic:false})` 中的 `searchText` 来自正在讨论的事情，`personId` 来自真实发言账号。返回对象的 `items` 包含真实 `id`、`revision`、`snippet` 和读取入口。选中后使用 `tools.memory_read({id:selected.id})`。继续列表时保持原条件并传入 `cursor:page.nextCursor`；无需读取全部命中结果。
+
 `memory_revise` 的顶层字段是 `memory`、`expectedRevision`、`reason`。创建新记忆使用完整对象：
 
 ```javascript

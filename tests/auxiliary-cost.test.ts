@@ -7,7 +7,7 @@ import { Store, Payloads, loadConfig, roleInputSchema, recallSchema, continuityD
 import { Continuity } from '../packages/kw-mind/src/continuity.ts';
 import { consolidationSchema } from '../packages/kw-mind/src/index.ts';
 import { consolidationDue, consolidationMessages, relatedConsolidationRecords, consolidationCorrectionInput, type ConsolidationInput } from '../packages/kw-mind/src/consolidation-input.ts';
-import { parseConsolidationOutput, correctConsolidationOutput } from '../packages/kw-mind/src/consolidation-output.ts';
+import { parseConsolidationOutput } from '../packages/kw-mind/src/consolidation-output.ts';
 import { localRecall } from '../packages/kw-mind/src/local-recall.ts';
 
 function environment() {
@@ -52,12 +52,12 @@ test('整理只携带相关认识，格式补全不接受未知修订或改变�
   try {
     const saved = memory('红楼梦阅读');
     input.memories.push(saved);
-    const parsed = parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ ...saved, expectedRevision: undefined }], continuity: null }), input);
+    const parsed = parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ id: saved.id, content: '新的阅读认识' }], continuity: null }), input);
     assert.equal(parsed.value.memories[0]!.expectedRevision, saved.revision);
     assert.deepEqual(parsed.value.continuity, []);
-    assert.throws(() => parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ ...saved, id: 'unknown', expectedRevision: undefined }] }), input), EvidenceError);
-    assert.throws(() => parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ ...saved, kind: 'made-up', expectedRevision: saved.revision }] }), input), EvidenceError);
-    const invalid = parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ ...saved, expectedRevision: saved.revision, sources: ['nonexistent'] }] }), input).value.memories[0]!;
+    assert.throws(() => parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ id: 'unknown', content: '无目标' }] }), input), EvidenceError);
+    assert.throws(() => parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ id: saved.id, kind: 'made-up' }] }), input), EvidenceError);
+    const invalid = parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ id: saved.id, sources: ['nonexistent'] }] }), input).value.memories[0]!;
     assert.throws(() => continuity.assertMemory({ ...invalid, roleId: 'reader' }), EvidenceError);
     const unrelated = { ...saved, id: 'unrelated', title: '火星气象', content: '沙尘颗粒与大气压', people: [], sources: [] };
     const selected = relatedConsolidationRecords(input, [saved, unrelated], []);
@@ -85,12 +85,16 @@ test('后台连续性修订与后续计划同步不会关联到随后开始的�
   } finally { store.close(); }
 });
 
-test('整理重试只修正出错字段，不改变原草稿，拒绝无效路径和原型写入', () => {
-  const draft = { memories: [{ title: '原始认识', epistemic: 'observed' }], continuity: [] };
-  const corrected = correctConsolidationOutput(draft, '[{"op":"replace","path":"/memories/0/epistemic","value":"inferred"}]');
-  assert.deepEqual(corrected, { memories: [{ title: '原始认识', epistemic: 'inferred' }], continuity: [] });
-  assert.equal(draft.memories[0]!.epistemic, 'observed');
-  assert.throws(() => correctConsolidationOutput(draft, '[{"op":"replace","path":"/missing","value":true}]'), EvidenceError);
-  assert.throws(() => correctConsolidationOutput(draft, '[{"op":"add","path":"/__proto__/polluted","value":true}]'), EvidenceError);
-  assert.equal(Reflect.get({}, 'polluted'), undefined);
+test('整理提取和修正共用业务对象，修改合并旧来源并拒绝其他协议', () => {
+  const { store, memory, input } = environment();
+  try {
+    const saved = memory('原始认识'); input.memories.push(saved);
+    const result = parseConsolidationOutput(consolidationSchema, JSON.stringify({ memories: [{ id: saved.id, epistemic: 'inferred' }] }), input).value;
+    assert.equal(result.memories[0]!.content, saved.content);
+    assert.deepEqual(result.memories[0]!.sources, saved.sources);
+    assert.equal(result.memories[0]!.epistemic, 'inferred');
+    assert.throws(() => parseConsolidationOutput(consolidationSchema, '[{"op":"replace","path":"/memories/0/epistemic","value":"inferred"}]', input), EvidenceError);
+    assert.throws(() => parseConsolidationOutput(consolidationSchema, '{"__proto__":{"polluted":true}}', input), EvidenceError);
+    assert.equal(Reflect.get({}, 'polluted'), undefined);
+  } finally { store.close(); }
 });

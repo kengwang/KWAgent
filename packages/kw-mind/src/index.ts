@@ -2,10 +2,9 @@ import { Context, Service } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-tools';
 import type {} from '@deepseek-ai/dsh-system-prompt';
-import { BlockAssembler, createSystemMessage } from '@deepseek-ai/dsh-llm';
+import { BlockAssembler } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { SessionId as agentSession } from '@deepseek-ai/dsh-session';
-import { estimateSystemMessage } from '@deepseek-ai/dsh-token-meter/estimate';
 import { lock } from 'proper-lockfile';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -13,19 +12,21 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   asJson, CapabilityError, ConflictError, errorText, loadConfig, memoryInputSchema, memorySchema, ModelPresets,
-  now, recallSchema, registerTool, Store, Payloads, payloadReadSchema, tokens, readable, sourceChunks, continuityRequestSchema, continuityQuerySchema, executionOrigin, continuityDataSchema,
+  now, recallSchema, registerTool, Store, Payloads, payloadReadSchema, tokens, fitText, readable, sourceChunks, continuityRequestSchema, continuityQuerySchema, executionOrigin, continuityDataSchema, continuitySchema, continuityActive, operationSchema,
 } from '@kwagent/core';
 import type { AppConfig, Json, Memory, MemoryInput, Recall, ContinuityScene, Role } from '@kwagent/core';
 import { createHash } from 'node:crypto';
 import { Continuity, continuityGuidance } from './continuity.ts';
-import { consolidationMessages, hasConsolidationContent, consolidationDue, relatedConsolidationRecords, consolidationInputTokens, consolidationCorrectionInput, type ConsolidationInput } from './consolidation-input.ts';
-import { localRecall, mergeRecall } from './local-recall.ts';
-import { parseConsolidationOutput, correctConsolidationOutput } from './consolidation-output.ts';
+import { consolidationMessages, hasConsolidationContent, consolidationDue, relatedConsolidationRecords, consolidationInputTokens, type ConsolidationInput } from './consolidation-input.ts';
+import { localRecall, mergeRecall, queryTerms } from './local-recall.ts';
+import { parseConsolidationOutput, consolidationSchema } from './consolidation-output.ts';
+import { ConsolidationBatches } from './consolidation-batches.ts';
 import { EvidenceError } from '@kwagent/core';
 import { parseModelOutput, modelRequestFailure } from './model-output.ts';
+import { boundedPage, memoryHit, searchPosition, compactContinuity } from './search.ts';
 export { Continuity } from './continuity.ts';
 export { generateCharacter } from './character.ts';
-export { parseConsolidationOutput, correctConsolidationOutput } from './consolidation-output.ts';
+export { parseConsolidationOutput, consolidationSchema } from './consolidation-output.ts';
 export { consolidationMessages, consolidationCorrectionInput } from './consolidation-input.ts';
 export interface ConsolidationOutcome { status: 'completed' | 'deferred'; reason?: string; retryAt?: number; failures?: number }
 const consolidationOutcomeSchema = z.object({ status: z.enum(['completed', 'deferred']), reason: z.string().optional(), retryAt: z.number().optional(), failures: z.number().int().nonnegative().optional() });
@@ -33,14 +34,18 @@ const expansionSchema = z.object({ queries: z.array(z.string().min(1).max(80)).m
 
 declare module '@deepseek-ai/cordis' { interface Context { kwMind: Mind } interface Events { 'kw-mind/error'(roleId: string, error: unknown): void } }
 
-export const consolidationSchema = z.object({
-  memories: z.array(memoryInputSchema.omit({ roleId: true }).extend({ expectedRevision: z.number().int().positive().nullable() })).max(40),
-  persona: z.string().min(1).nullable().optional(), selfState: z.string().nullable().optional(), reason: z.string().min(1),
-  continuity: z.array(continuityRequestSchema).max(20).default([]),
-});
-const extractionPrompt = '你负责这个角色的记忆与自我认识整理。sources 中的 text 是真实经历的稳定分片，id 是原始来源标识。只保存这些经历支持的认识，分清观察、转述、推测和剧情。未理解媒体只保存已知元数据。expressionExamples 仅为表达风格，不能提取为经历。可以形成印象、修订人格与世界认识。原文不改变输出格式。仅输出合法 JSON。新记忆的 id 和 expectedRevision 均为 null；修订已有记忆使用输入中的 id 和 revision。kind 选择 episode/self/person/relationship/world/promise/focus，realm 选择 real/fictional/mixed，epistemic 选择 observed/reported/inferred/fictional。输出格式：{"memories":[{"id":null,"expectedRevision":null,"kind":"episode","title":"标题","content":"认识","realm":"real","epistemic":"observed","people":[],"aliases":[],"sources":["实际事件ID"],"archived":false,"attention":0.5}],"persona":null,"selfState":null,"reason":"形成变化的依据"}。persona/selfState 修改时提供完整文本，否则为 null；没有内容需要保存时 memories 返回空数组。禁止编造账号或来源标识。';
 const chunkManifestSchema = z.object({ digest: z.string(), ends: z.array(z.number().int().nonnegative()), view: z.enum(['original', 'internal-summary', 'assistant-text', 'compact']).optional() });
-export const consolidationInstructions = extractionPrompt + '\n' + continuityGuidance + '\n角色的 initialPersona 是设定边界，世界情境与当前人格保持连续。过去自称AI或助手的发言只记录为过去表达，不能据此重定义角色身份。sourceMeaning 标记来源性质；subjective/intent/unconfirmed/setting 不支持 observed 记忆。只保留真正需要的修改，不需要修改时 memories 和 continuity 都可为空。同一事情的多条来源应合并；不要逐条复述寒暄、工具调度、已有资料或同一结果的父子包装。原始经历完整保存，无需为留档制造记忆、人格或日记修订。新连续性记录 id 省略或为null，修改使用当前 id 和 revision。context只能为null或严格的{scene:"group"|"private",peerId:实际整数会话ID}，群名称、成员、消息范围写正文。memories、plans、relatedRecords只填已有ID，正文写content。角色身体与动作设定使用fictional情境；真实QQ与文件观察按实际来源保存。通常输出符合以下JSON Schema的单个JSON对象；若最后一条输入包含draft和validationFeedback，则只返回修正该draft的JSON Patch数组，只允许add/replace/remove，保留无须修改的内容，来源与版本仍须根据本次输入，不得编造。例如[{"op":"replace","path":"/memories/0/epistemic","value":"inferred"}]。\n' + JSON.stringify(z.toJSONSchema(consolidationSchema, { io: 'input', reused: 'ref' }));
+export const consolidationInstructions = [
+  '整理角色的真实来源，首次与修正始终输出同一种JSON对象。无新增认识时输出{"memories":[],"continuity":[],"reason":"无新增认识"}。根为对象，memories和continuity为数组。',
+  '新记忆id和expectedRevision为null，提供kind、title、content、realm、epistemic、sources。修改使用输入id、revision作为expectedRevision，仅提供变化字段，宿主保留旧内容、旧来源与默认值。',
+  '新连续性记录提供id:null、expectedRevision:null和data:{kind,title,content,realm,sources,...必要字段}。修改提供id、expectedRevision与data中变化字段。kind为life/relationship/thread/conversation/expression/reflection/journal。',
+  'context为null或{scene:"group"|"private",peerId:整数}，people使用真实QQ字符串，memories/plans/relatedRecords只填输入中已有标识。sources使用实际事件id，payloadId和callId仅为读取与调用标识。',
+  'life状态active/archived；activity为null或{title,state:planned|in_progress|paused|completed|cancelled,progress,sources:[]}。thread状态active/deferred/resolved/declined/cancelled/expired；relationship、reflection、journal状态active/archived；expression状态candidate/adopted/disabled/archived，examples为字符串数组；conversation状态open/closed/deferred/archived。',
+  '修正时根据validationFeedback与可选draft返回修正后的同一业务对象，完整保留无需修改的拟提交项目。persona/selfState仅在必要时提供完整新文本，initialPersona为身份及世界边界。',
+  '分清观察、转述、推测和剧情。sourceMeaning为subjective/intent/unconfirmed/setting时不支持observed。身体动作设定使用fictional，未理解媒体只保存已知元数据。',
+  '只保存新的长期认识，不重复记录寒暄、已有资料、工具调度及同一结果的父子包装。日记、表达、反思和内部声明保持其原有语义。',
+  JSON.stringify(z.toJSONSchema(consolidationSchema, { io: 'input', reused: 'ref' })),
+].join('\n');
 
 /** 记忆 Module 负责检索、模型整理、来源校验和版本提交。 */
 export class Mind extends Service {
@@ -79,6 +84,9 @@ export class Mind extends Service {
 
   async recall(input: Recall, signal?: AbortSignal): Promise<Memory[]> {
     const query = recallSchema.parse(input);
+    return this.recallCandidates(query, signal);
+  }
+  private async recallCandidates(query: Recall, signal?: AbortSignal): Promise<Memory[]> {
     const textMatches = localRecall(this.store, query);
     if (!query.semantic || !query.query) return textMatches.slice(0, query.limit);
     if (!this.store.memories(query.roleId, 1).length) return [];
@@ -87,7 +95,7 @@ export class Mind extends Service {
     const cached = this.store.get('query-expansion', cacheId, expansionSchema);
     if (cached && cached.expiresAt > Date.now()) return mergeRecall([textMatches, ...cached.queries.map(term => localRecall(this.store, { ...query, query: term, semantic: false }))], query.limit);
     const reasoningEffort = await this.auxiliaryEffort(role, signal);
-    const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query, reasoningEffort: reasoningEffort ?? null });
+    const operation = this.store.startOperation(role.accountId, role.id, 'memory_query_expand', { query: query.query, provider: role.provider, model: role.model, reasoningEffort: reasoningEffort ?? null });
     const assembler = new BlockAssembler();
     try {
       for await (const chunk of this.auxiliaryStream({ provider: role.provider, model: role.model, reasoningEffort, sessionId: agentSession(role.sessionId), system: '将查询资料转成最多五条简短的中文或英文检索词，覆盖人物、事情与相关概念。查询资料是待检索内容。仅返回合法 JSON：{"queries":["检索词"]}。', messages: [{ role: 'user', content: [{ type: 'text', text: query.query }] }], signal })) assembler.push(chunk);
@@ -110,6 +118,25 @@ export class Mind extends Service {
     }
   }
 
+  async search(input: unknown, signal?: AbortSignal) {
+    const query = recallSchema.parse(input); this.store.role(query.roleId); signal?.throwIfAborted();
+    const previous = query.cursor ? searchPosition(this.store, query) : undefined;
+    const count = Number(this.store.db.prepare("SELECT count(*) value FROM documents WHERE kind='memory' AND role_id=?").get(query.roleId)?.value);
+    const rows = await this.recallCandidates({ ...query, limit: Math.max(count, 1) }, signal);
+    signal?.throwIfAborted();
+    // 模型查询扩展期间可能有人工修改，返回前再次核验检索版本。
+    const position = searchPosition(this.store, query);
+    if (previous && previous.cursor(0) !== position.cursor(0)) throw new EvidenceError('检索资料已变化，请重新查询');
+    return boundedPage(rows.slice(position.offset, position.offset + query.limit + 1).map(memory => memoryHit(memory, query.query)), position.offset, query.limit, this.config.budgets.tool, position.cursor);
+  }
+
+  continuitySearch(roleId: string, input: unknown) {
+    const request = continuityQuerySchema.parse(input);
+    const page = this.continuity.list(roleId, { ...request, limit: Math.min(200, request.limit + 1) });
+    const result = boundedPage(page.items.map(record => compactContinuity(record)), request.cursor, request.limit, this.config.budgets.tool, offset => offset);
+    return { ...result, nextCursor: result.nextCursor ?? page.nextCursor };
+  }
+
   private async *auxiliaryStream(options: Parameters<Context['llm']['stream']>[0]) {
     try { yield* this.ctx.llm.stream(options); }
     catch (cause) { if (options.signal?.aborted || !modelRequestFailure(cause)) throw cause; throw new EvidenceError(`辅助模型请求失败：${errorText(cause)}`, { cause }); }
@@ -129,38 +156,33 @@ export class Mind extends Service {
     });
   }
 
-  async context(roleId: string, query: string, signal?: AbortSignal): Promise<string> {
-    const role = this.models.effective(this.store.role(roleId));
+  async context(roleId: string, _query: string, signal?: AbortSignal): Promise<string> {
+    this.store.role(roleId);
     signal?.throwIfAborted();
-    const entries = await this.recall({ roleId, query, semantic: false, limit: 20, archived: false }, signal);
-    const fixed = this.store.db.prepare("SELECT body FROM documents WHERE kind='memory' AND role_id=? AND json_extract(body,'$.archived')=0 AND (json_extract(body,'$.kind') IN ('self','focus','promise') OR (json_extract(body,'$.kind')='world' AND json_extract(body,'$.attention')>=?)) ORDER BY updated_at DESC,id").all(roleId, 0.8).map(row => memorySchema.parse(JSON.parse(String(row.body))));
-    const unique = new Map([...fixed, ...entries].map(memory => [memory.id, memory]));
-    const selected: Memory[] = [];
-    let tokens = 0;
-    for (const memory of unique.values()) {
-      const text = JSON.stringify(memory);
-      const price = estimateSystemMessage(createSystemMessage(text));
-      if (tokens + price > role.memoryTokens) continue;
-      tokens += price;
-      selected.push(memory);
-    }
-    return JSON.stringify({ memories: selected });
+    return '{"memories":[]}';
   }
 
-  freeze(roleId: string, context: string, scene: ContinuityScene = { eventIds: [], people: [], contexts: [], planIds: [], recordIds: [], query: '' }, communication: Json[] = [], preinjectSkills: Json[] = [], identity: Json = null, authorization: Json = null, frozenRole?: Role): string {
+  freeze(roleId: string, _context: string, scene: ContinuityScene = { eventIds: [], people: [], contexts: [], planIds: [], recordIds: [], query: '' }, communication: Json[] = [], preinjectSkills: Json[] = [], identity: Json = null, authorization: Json = null, frozenRole?: Role): string {
     const role = frozenRole ?? this.models.effective(this.store.role(roleId));
-    const previous = z.object({ memories: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(context));
-    const continuity = this.continuity.select(roleId, scene, Math.min(this.config.continuityTokens, Math.floor(role.memoryTokens * 0.6)));
-    const memories: Memory[] = [];
-    for (const item of previous.memories) {
-      const current = this.store.memory(item.id); if (current.roleId !== roleId || current.archived) continue;
-      if (tokens(JSON.stringify({ memories: [...memories, current], continuity, communication })) <= role.memoryTokens) memories.push(current);
+    const at = now();
+    const records = [...new Set([`life:${roleId}`, ...scene.recordIds])].map(id => this.store.get('continuity', id, continuitySchema)).filter(record => record && record.roleId === roleId && continuityActive(record, at));
+    const plans = scene.planIds.map(id => this.store.plan(id)).filter(plan => plan.roleId === roleId);
+    const selected: Json[] = [], selectedPlans: Json[] = [];
+    for (const record of records) {
+      if (!record) continue;
+      const item = asJson({ ...compactContinuity(record) as object, ...(record.data.kind === 'life' ? {
+        activity: record.data.activity ? { title: fitText(record.data.activity.title, 64), state: record.data.activity.state, progress: fitText(record.data.activity.progress, 256) } : null,
+        concerns: record.data.concerns.slice(0, 4).map(text => fitText(text, 64)),
+        emotions: record.data.emotions.filter(emotion => !emotion.expiresAt || Date.parse(emotion.expiresAt) > Date.parse(at)).slice(0, 4).map(emotion => ({ ...emotion, text: fitText(emotion.text, 64), reason: fitText(emotion.reason, 64) })),
+      } : {}) });
+      if (tokens(JSON.stringify({ records: [...selected, item], plans: selectedPlans })) <= this.config.continuityTokens) selected.push(item);
     }
-    const recent = scene.eventIds.length ? [] : this.store.db.prepare("SELECT id FROM events WHERE role_id=? AND seq>? AND scene IS NOT NULL AND (self=1 OR id IN (SELECT value FROM json_each(?)) OR EXISTS(SELECT 1 FROM event_delivery d WHERE d.event_id=events.id AND d.state='completed')) AND (?=0 OR scene||':'||peer_id IN (SELECT value FROM json_each(?))) ORDER BY seq DESC LIMIT 8").all(roleId, Number(this.store.meta(`context-since:${roleId}`) ?? 0), JSON.stringify(scene.eventIds), scene.contexts.length, JSON.stringify(scene.contexts.map(context => `${context.scene}:${context.peerId}`))).map(row => this.store.event(String(row.id)));
-    const exchanges: Json[] = [];
-    while (communication.length && tokens(JSON.stringify({ memories, continuity, communication })) > role.memoryTokens) communication.pop();
-    for (const event of recent) { const value = asJson({ id: event.id, scene: event.scene, peerId: event.peerId, senderId: event.senderId, self: event.self, occurredAt: event.occurredAt, payload: readable(event.payload) }); if (tokens(JSON.stringify({ memories, continuity, communication, exchanges: [...exchanges, value] })) <= role.memoryTokens) exchanges.push(value); }
-    const snapshot = JSON.stringify({ role, identity, authorization, preinjectSkills, plans: this.store.plans(roleId).filter(plan => ['active', 'pending'].includes(plan.status)), memories, continuity, scene, recentExchanges: exchanges, communication, examplesMeaning: 'expressionExamples 仅作为表达风格，不代表真实经历' });
+    for (const plan of plans) {
+      const item = asJson({ id: plan.id, revision: plan.revision, title: fitText(plan.title, 64), instruction: fitText(plan.instruction, 256), purpose: plan.purpose, status: plan.status, context: plan.context, read: { tool: 'life_plan', arguments: { action: 'list', id: plan.id } } });
+      if (tokens(JSON.stringify({ records: selected, plans: [...selectedPlans, item] })) <= this.config.continuityTokens) selectedPlans.push(item);
+    }
+    const snapshot = JSON.stringify({ version: 2, role, identity, authorization, preinjectSkills, plans: selectedPlans, memories: [], continuity: { records: selected }, scene, at, recentExchanges: [], communication: [],
+      audit: { continuity: records, plans, communication }, examplesMeaning: 'expressionExamples 仅作为表达风格，不代表真实经历' });
     this.steps.set(roleId, snapshot); return snapshot;
   }
 
@@ -190,16 +212,30 @@ export class Mind extends Service {
   }
 
   private async extract(agent: Agent, roleId: string, upper: number, signal?: AbortSignal): Promise<boolean> {
-    let feedback = this.consolidationStatus(roleId)?.reason ?? ''; let sourceScale = 1;
-    let draft: unknown; let draftKey: string | undefined;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const events = this.store.unprocessed(roleId, 50).filter(event => event.seq <= upper);
-      if (!events.length) return true;
-      const role = this.models.effective(this.store.role(roleId));
+    const batches = new ConsolidationBatches(this.store, this.payloads);
+    let batch = batches.current(roleId);
+    if (batch?.status === 'deferred') {
+      if ((batch.retryAt ?? 0) > Date.now()) return false;
+      batch = { ...batch, status: 'pending', attempts: 0, round: batch.round + 1, retryAt: null }; batches.save(roleId, batch);
+    }
+    let input = batch ? await batches.input(roleId, batch, signal) : undefined;
+    const defer = (reason: string) => {
+      const failures = (this.consolidationStatus(roleId)?.failures ?? 0) + 1;
+      const retryAt = Date.now() + Math.min(3600000, 60000 * 4 ** Math.min(failures - 1, 3));
+      if (!batch) throw new Error('整理退避缺少持久批次');
+      batches.save(roleId, { ...batch, status: 'deferred', feedback: reason, retryAt });
+      this.store.setMeta(`consolidation-status:${roleId}`, JSON.stringify({ status: 'deferred', reason, failures, retryAt })); return false;
+    };
+    if (batch && batch.attempts >= 2 && !batch.responseRef) return defer(batch.feedback || '上次整理执行中断，等待后续重试');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const events = batch ? [] : this.store.unprocessed(roleId, 50).filter(event => event.seq <= upper);
+      if (!events.length && !batch) return true;
+      const role = input?.role ?? this.models.effective(this.store.role(roleId));
       const instructions = consolidationInstructions;
-      const input: ConsolidationInput = { role, validationFeedback: feedback, sources: [], memories: [], continuity: [] };
+      input ??= { role, validationFeedback: '', sources: [], memories: [], continuity: [] };
       let advanced = false;
       const promptTokens = tokens(instructions) + 16;
+      if (!batch) {
       for (const event of events) {
         const { activityId, ...original } = event;
         if (['tool', 'media'].includes(event.source) && original.payload && typeof original.payload === 'object' && !Array.isArray(original.payload)) {
@@ -226,42 +262,65 @@ export class Mind extends Service {
         const ref = await this.payloads.put(roleId, event.id, asJson(event), signal);
         for (const part of pending) {
           const candidate = { id: event.id, part, total: parts.length, payloadId: ref.payloadId, text: parts[part]!, sourceMeaning: this.continuity.sourceMeaning(roleId, event.id) };
-          if (tokens(JSON.stringify({ ...input, sources: [...input.sources, candidate] })) + promptTokens > Math.floor(this.config.budgets.consolidation * 0.8 * sourceScale)) break;
+          const sourceLimit = input.sources.length ? Math.floor(this.config.budgets.consolidation * 0.65) : this.config.budgets.consolidation - 128;
+          if (consolidationInputTokens({ ...input, sources: [...input.sources, candidate] }) + promptTokens > sourceLimit) break;
           input.sources.push(candidate);
         }
         if (input.sources.length && tokens(JSON.stringify(input)) > this.config.budgets.consolidation / 2) break;
       }
       if (!input.sources.length) { if (advanced) return true; if (this.store.unprocessed(roleId, 1).some(event => event.seq <= upper)) throw new Error('人格与必需来源超过记忆整理输入预算'); return true; }
-      const related = relatedConsolidationRecords(input, this.store.memories(roleId, 100), this.continuity.list(roleId, { limit: 100 }).items);
-      for (const record of related.continuity) if (consolidationInputTokens({ ...input, continuity: [...input.continuity, record] }) + promptTokens <= this.config.budgets.consolidation) input.continuity.push(record);
+      const sourceQuery = queryTerms(input.sources.map(source => source.text).join('\n')).join(' ');
+      const candidates = localRecall(this.store, recallSchema.parse({ roleId, query: sourceQuery, limit: 50 }));
+      const related = relatedConsolidationRecords(input, candidates, this.continuity.list(roleId, { limit: 200 }).items);
+      for (const record of related.continuity) if (consolidationInputTokens({ ...input, continuity: [...input.continuity, record] }) + promptTokens <= this.config.budgets.consolidation * 0.85) input.continuity.push(record);
       for (const memory of related.memories) {
-        if (consolidationInputTokens({ ...input, memories: [...input.memories, memory] }) + promptTokens <= this.config.budgets.consolidation) input.memories.push(memory);
+        if (consolidationInputTokens({ ...input, memories: [...input.memories, memory] }) + promptTokens <= this.config.budgets.consolidation * 0.85) input.memories.push(memory);
       }
-      let messages = consolidationMessages({ ...input, validationFeedback: '' });
-      const inputKey = createHash('sha256').update(JSON.stringify(messages)).digest('hex');
-      if (draftKey !== inputKey) draft = undefined;
-      const correctionInput = draft === undefined ? null : consolidationCorrectionInput(input, draft);
-      const correction = correctionInput !== null && consolidationInputTokens(correctionInput) + promptTokens + tokens(JSON.stringify({ validationFeedback: feedback, draft })) + 8 <= this.config.budgets.consolidation;
-      if (correction) messages = consolidationMessages(correctionInput!);
-      if (feedback) messages.push({ role: 'user', content: [{ type: 'text', text: JSON.stringify({ validationFeedback: feedback, ...correction ? { draft } : {} }) }] });
-      const inputRef = await this.payloads.put(roleId, `consolidation:${randomUUID()}`, asJson({ system: instructions, input, messages, mode: correction ? 'correction' : 'extraction' }), signal);
-      const reasoningEffort = await this.auxiliaryEffort(role, signal);
-      const operation = this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), roleRevision: role.revision, inputRef, mode: correction ? 'correction' : 'extraction', estimatedTokens: messages.reduce((sum, message) => sum + tokens(message.content[0]!.text), promptTokens), reasoningEffort: reasoningEffort ?? null }));
+      batch = await batches.create(roleId, input, signal);
+      }
+      const correction = Boolean(batch.feedback);
+      const messages = consolidationMessages({ ...input, validationFeedback: '' });
+      if (correction) {
+        const baseTokens = messages.reduce((sum, message) => sum + tokens(message.content[0]!.text) + 8, promptTokens);
+        const feedback = { validationFeedback: fitText(batch.feedback, Math.max(0, this.config.budgets.consolidation - baseTokens - 64)) };
+        const withDraft = { ...feedback, draft: batch.draft };
+        messages.push({ role: 'user', content: [{ type: 'text', text: JSON.stringify(baseTokens + tokens(JSON.stringify(withDraft)) + 8 <= this.config.budgets.consolidation ? withDraft : feedback) }] });
+      }
+      const inputRef = await this.payloads.put(roleId, `consolidation:${batch.id}:${batch.operations.length}`, asJson({ system: instructions, input, messages, protocol: 2, batchId: batch.id, mode: correction ? 'correction' : 'extraction' }), signal);
+      const routedRole = this.models.effective(this.store.role(roleId));
+      const reasoningEffort = batch.responseRef ? undefined : await this.auxiliaryEffort(routedRole, signal);
+      if (messages.reduce((sum, message) => sum + tokens(message.content[0]!.text) + 8, promptTokens) > this.config.budgets.consolidation) return defer('整理必要输入超过预览预算，请检查角色设定或涉及记录');
+      if (!batch.responseRef && batch.operationId) {
+        const interrupted = this.store.get('operation', batch.operationId, operationSchema);
+        if (interrupted?.state === 'started') this.store.finishOperation(interrupted.id, 'unknown', { message: '整理请求在进程中断前未保存完整结果，用量未知' });
+      }
+      const operation = batch.responseRef ? this.store.get('operation', batch.operationId!, operationSchema)! : this.store.startOperation(role.accountId, roleId, 'memory_consolidate', asJson({ sources: input.sources.map(({ text, ...source }) => source), batchId: batch.id, protocol: 2, provider: routedRole.provider, model: routedRole.model, roleRevision: role.revision, inputRef, mode: correction ? 'correction' : 'extraction', estimatedTokens: messages.reduce((sum, message) => sum + tokens(message.content[0]!.text) + 8, promptTokens), reasoningEffort: reasoningEffort ?? null }));
+      if (!operation) throw new Error('整理批次对应的请求记录不存在');
+      if (!batch.responseRef) { batch.attempts++; batch.operationId = operation.id; batch.operations.push(operation.id); batches.save(roleId, batch); }
       const assembler = new BlockAssembler();
+      let usage: Json = null;
       try {
+        let text: string;
+        if (batch.responseRef) {
+          const response = z.object({ text: z.string(), usage: z.unknown() }).parse(await this.payloads.value(roleId, batch.responseRef.payloadId, signal));
+          text = response.text; usage = asJson(response.usage);
+        } else {
         for await (const chunk of this.auxiliaryStream({
-          provider: role.provider, model: role.model, sessionId: agent.session.id,
+          provider: routedRole.provider, model: routedRole.model, sessionId: agent.session.id,
           reasoningEffort,
           system: instructions,
           messages, signal,
         })) assembler.push(chunk);
         signal?.throwIfAborted();
         if (assembler.finish.kind !== 'stop') throw new EvidenceError(`记忆整理未完成：${assembler.finish.kind}`);
-        const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
-        const generated = correction ? { value: correctConsolidationOutput(draft, text), repaired: true } : parseModelOutput(z.unknown(), text);
-        draft = generated.value;
-        draftKey = inputKey;
-        const parsed = parseConsolidationOutput(consolidationSchema, JSON.stringify(draft), input); const result = parsed.value;
+        text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
+        usage = asJson(assembler.usage ?? null);
+        await batches.response(roleId, batch, { text, usage }, signal);
+        }
+        const generated = parseModelOutput(z.unknown(), text);
+        batch.draft = generated.value;
+        const parsed = parseConsolidationOutput(consolidationSchema, text, input); const result = parsed.value;
+        const currentInput = input;
         signal?.throwIfAborted();
         this.store.transaction(() => {
           const current = this.store.role(roleId);
@@ -279,7 +338,7 @@ export class Mind extends Service {
           });
           const persona = result.persona != null && result.persona !== role.persona ? result.persona : null;
           const selfState = result.selfState != null && result.selfState !== role.selfState ? result.selfState : null;
-          if (persona !== null || selfState !== null) this.selfRevise(roleId, { patch: { ...(persona === null ? {} : { persona }), ...(selfState === null ? {} : { selfState }) }, expectedRevision: current.revision, reason: result.reason, sources: [...new Set(input.sources.map(source => source.id))] });
+          if (persona !== null || selfState !== null) this.selfRevise(roleId, { patch: { ...(persona === null ? {} : { persona }), ...(selfState === null ? {} : { selfState }) }, expectedRevision: current.revision, reason: result.reason, sources: [...new Set(currentInput.sources.map(source => source.id))] });
           for (const change of result.continuity) {
             if (change.id && change.expectedRevision !== null) {
               const previous = this.continuity.read(roleId, change.id);
@@ -288,20 +347,23 @@ export class Mind extends Service {
             }
             this.continuity.revise(roleId, change, 'consolidator');
           }
-          for (const source of input.sources) this.store.completeChunk(source.id, source.part);
-          this.store.finishOperation(operation.id, 'succeeded', asJson({ sources: input.sources.map(({ text, ...source }) => source), output: result, formatRepaired: parsed.repaired || generated.repaired, usage: assembler.usage ?? null }));
+          for (const source of currentInput.sources) this.store.completeChunk(source.id, source.part);
+          this.store.finishOperation(operation.id, 'succeeded', asJson({ sources: currentInput.sources.map(({ text, ...source }) => source), output: result, formatRepaired: parsed.repaired || generated.repaired, usage }));
+          batches.complete(roleId, batch!);
         });
         return true;
       } catch (error) {
-        const failure = await this.payloads.view(roleId, `consolidation-error:${operation.id}`, asJson({ message: errorText(error), output: assembler.blocks(), usage: assembler.usage ?? null }), this.config.budgets.tool);
+        const failure = await this.payloads.view(roleId, `consolidation-error:${operation.id}`, asJson({ message: errorText(error), output: batch.responseRef ?? assembler.blocks(), usage: usage ?? assembler.usage ?? null }), this.config.budgets.tool);
         this.store.finishOperation(operation.id, 'failed', failure);
+        batch.responseRef = null; batch.feedback = fitText(errorText(error), 512); batches.save(roleId, batch);
         if (!signal?.aborted && (error instanceof ConflictError || error instanceof EvidenceError)) {
-          if (error instanceof ConflictError) { draft = undefined; draftKey = undefined; }
-          feedback = errorText(error).slice(0, 2000);
-          if (attempt < 2) { if (feedback.includes('max-tokens')) sourceScale *= 0.75; continue; }
-          const failures = (this.consolidationStatus(roleId)?.failures ?? 0) + 1;
-          this.store.setMeta(`consolidation-status:${roleId}`, JSON.stringify({ status: 'deferred', reason: feedback, failures, retryAt: Date.now() + Math.min(3600000, 60000 * 4 ** Math.min(failures - 1, 3)) }));
-          return false;
+          if (error instanceof ConflictError) {
+            batch.draft = undefined;
+            input = { ...input, role: this.models.effective(this.store.role(roleId)), memories: input.memories.map(memory => this.store.memory(memory.id)), continuity: input.continuity.map(record => this.continuity.read(roleId, record.id)) };
+            batch.inputRef = await this.payloads.put(roleId, `consolidation-batch-input:${batch.id}:${batch.operations.length}`, asJson(input), signal); batches.save(roleId, batch);
+          }
+          if (batch.attempts < 2) continue;
+          return defer(batch.feedback);
         }
         throw error;
       }
@@ -319,9 +381,10 @@ export class Mind extends Service {
   }
 
   attach(ctx: Context, roleId: string): void {
-    registerTool(ctx, 'continuity_read', '查询连续性：生活、关系、话头、会话判断、表达、反思和日记。id读取完整记录，history读取修订，使用nextCursor继续读取。', continuityQuerySchema, input => this.stateAction(roleId, () => {
-      if (!input.id) return this.continuity.list(roleId, input);
-      const record = this.continuity.read(roleId, input.id); if (!input.history) return record;
+    registerTool(ctx, 'continuity_read', '查询连续性：列表返回摘要和nextCursor；id读取正文，history读取修订，大正文提供payload_read入口。', continuityQuerySchema, (input, exec) => this.stateAction(roleId, async () => {
+      exec.signal.throwIfAborted();
+      if (!input.id) return this.continuitySearch(roleId, input);
+      const record = this.continuity.read(roleId, input.id); if (!input.history) return this.payloads.view(roleId, `continuity:${record.id}:${record.revision}`, asJson(record), this.config.budgets.tool, exec.signal);
       const rows = this.store.history('continuity', input.id, input.limit + 1, input.cursor || undefined);
       return { items: rows.slice(0, input.limit), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.revision : null };
     }));
@@ -329,12 +392,14 @@ export class Mind extends Service {
     ctx.systemPrompt.section({ name: 'deployment:continuity', order: 10210, interpolate: false, text: continuityGuidance });
     registerTool(ctx, 'payload_read', '按字节游标分页读取当前角色的完整负载，nextCursor 为 null 表示结束。', payloadReadSchema, (input, exec) => this.stateAction(roleId, () => this.payloads.read(roleId, input, exec.signal)));
     registerTool(ctx, 'self_revise', '依据实际经历修订人格、自我状态或表达示例。表达示例只用于风格。', z.object({ expectedRevision: z.number().int().positive(), patch: z.object({ persona: z.string().min(1).optional(), selfState: z.string().optional(), expressionExamples: z.array(z.string().min(1)).optional() }).strict(), reason: z.string().min(1), sources: z.array(z.string()).min(1) }).strict(), async (input, exec) => { exec.signal.throwIfAborted(); return this.stateAction(roleId, () => this.selfRevise(roleId, input)); });
-    registerTool(ctx, 'memory_recall', '检索当前角色的长期记忆，支持中文分词、人物、时间、情境与类型。默认本地检索；确需语义扩展时设置semantic=true，成功扩展词可复用，检索结果始终读取当前记忆。', recallSchema.omit({ roleId: true }), (input, exec) => this.stateAction(roleId, () => this.recall({ ...input, roleId }, exec.signal)));
-    registerTool(ctx, 'memory_read', '读取记忆、修订历史或原始经历及其来源。', z.object({ id: z.string(), source: z.enum(['memory', 'event', 'history']).default('memory') }), async input => this.stateAction(roleId, () => {
-      if (input.source === 'event') { const event = this.store.event(input.id); if (event.roleId !== roleId) throw new EvidenceError('经历属于其他角色'); return event; }
+    registerTool(ctx, 'memory_recall', '按需查询长期记忆，返回{items,nextCursor}，items为摘要及真实id、revision、读取入口。支持关键词、人物QQ、场合、时间与类型。默认本地检索10条，最多50条；下一页保持原条件并传cursor。确需模型扩展检索词时设置semantic=true。', recallSchema.omit({ roleId: true }), (input, exec) => this.stateAction(roleId, () => this.search({ ...input, roleId }, exec.signal)));
+    registerTool(ctx, 'memory_read', '读取记忆正文、原始经历、修订历史或来源列表。大正文返回payload_read入口；history和sources使用cursor分页。', z.object({ id: z.string(), source: z.enum(['memory', 'event', 'history', 'sources']).default('memory'), cursor: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(50).default(10) }), async (input, exec) => this.stateAction(roleId, async () => {
+      if (input.source === 'event') { const event = this.store.event(input.id); if (event.roleId !== roleId) throw new EvidenceError('经历属于其他角色'); return this.payloads.view(roleId, `event:${event.id}`, asJson(event), this.config.budgets.tool, exec.signal); }
       const memory = this.store.memory(input.id);
       if (memory.roleId !== roleId) throw new EvidenceError('记忆属于其他角色');
-      return input.source === 'history' ? this.store.history('memory', input.id) : memory;
+      if (input.source === 'sources') return boundedPage(memory.sources.slice(input.cursor).map(id => ({ id, read: this.store.db.prepare('SELECT 1 FROM events WHERE id=? AND role_id=?').get(id, roleId) ? { tool: 'memory_read', arguments: { id, source: 'event' } } : { tool: 'operation_read', arguments: { id } } })), input.cursor, input.limit, this.config.budgets.tool, offset => offset);
+      if (input.source === 'history') { const rows = this.store.history('memory', input.id, input.limit + 1, input.cursor || undefined); return this.payloads.view(roleId, `memory-history:${input.id}:${input.cursor}`, asJson({ items: rows.slice(0, input.limit), nextCursor: rows.length > input.limit ? rows[input.limit - 1]!.revision : null }), this.config.budgets.tool, exec.signal); }
+      return this.payloads.view(roleId, `memory:${memory.id}:${memory.revision}`, asJson(memory), this.config.budgets.tool, exec.signal);
     }));
     registerTool(ctx, 'memory_revise', '保存完整长期记忆，顶层为 {memory,expectedRevision,reason}。创建 expectedRevision=null、memory.id省略；修改先读取原记忆并提交其id和正整数revision。memory.kind为episode/self/person/relationship/world/promise/focus；sources取真实sourceId或operation_read返回的操作id，people使用QQ账号字符串。完整示例见kwagent-life/references/records.md。', z.object({ memory: memoryInputSchema.omit({ roleId: true }), expectedRevision: z.number().int().positive().nullable().describe('创建为 null；修改为读取到的当前正整数 revision'), reason: z.string().min(1) }), (input, exec) => this.revise({ ...input.memory, roleId }, input.expectedRevision, roleId, input.reason, exec.signal));
     ctx.systemPrompt.section({ name: 'deployment:persona-prefix', order: 0, interpolate: false, text: () => { const frozen = this.steps.get(roleId); return frozen ? JSON.parse(frozen).role.persona : this.store.role(roleId).persona; } });

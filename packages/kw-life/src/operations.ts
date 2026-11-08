@@ -78,7 +78,7 @@ export class Operations {
       case 'continuity.revise': { const input = continuityRequestSchema.extend({ roleId: z.string() }).strict().parse(value); const { roleId, ...request } = input; const record = life.context.kwMind.continuity.revise(roleId, request, 'owner'); await life.syncContinuity(roleId); return asJson(record); }
       case 'events.transfer': { const input = z.object({ ids: z.array(z.string()).min(1).max(500), targetRoleId: z.string() }).parse(value); life.store.migrateEvents(input.ids, input.targetRoleId); return { transferred: input.ids.length }; }
       case 'self.revise': { const input = z.object({ roleId: z.string(), expectedRevision: z.number().int().positive(), patch: z.object({ persona: z.string().min(1).optional(), selfState: z.string().optional(), expressionExamples: z.array(z.string().min(1)).optional() }).strict(), reason: z.string().min(1), sources: z.array(z.string()).min(1) }).strict().parse(value); return asJson(life.context.kwMind.selfRevise(input.roleId, input, 'owner')); }
-      case 'memory.recall': return asJson((await life.context.kwMind.recall(recallSchema.parse(value))).map(memory => summary(memory, life.config.budgets.panelBodyBytes)));
+      case 'memory.recall': return asJson(await life.context.kwMind.search(value));
       case 'memory.consolidate': {
         const input = z.object({ roleId: z.string() }).parse(value);
         const handle = await life.ensure(input.roleId);

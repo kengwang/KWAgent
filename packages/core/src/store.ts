@@ -328,11 +328,11 @@ export class Store {
       values.push(query.scene ?? '', query.scene ?? '', query.peerId ?? 0, query.peerId ?? 0);
     }
     let join = '';
-    let order = 'd.updated_at DESC';
+    let order = 'd.updated_at DESC,d.id';
     if (query.query.length >= 3) {
       join = 'JOIN memory_rows r ON r.id=d.id JOIN memory_fts ON memory_fts.rowid=r.rowid';
       conditions.push('memory_fts MATCH ?'); values.push(`"${query.query.replaceAll('"', '""')}"`);
-      order = 'bm25(memory_fts)';
+      order = 'bm25(memory_fts),d.id';
     } else if (query.query) {
       conditions.push("instr(json_extract(d.body,'$.title')||json_extract(d.body,'$.content')||json_extract(d.body,'$.aliases'),?)>0"); values.push(query.query);
     }

@@ -65,6 +65,14 @@ try {
   assert.deepEqual(role.preinjectSkills, ['kwagent-life', 'lagrange']); assert.deepEqual(role.adminQQs, [10001]); assert.deepEqual(admin('skill.list', { roleId: role.id }), []);
   const event = admin('event', { roleId: role.id, text: '镜像中的 SQLite、Session 管理与对象目录可写。' });
   const source = admin('source.read', { roleId: role.id, id: event.id });
+  for (let index = 0; index < 15; index++) admin('memory.revise', { memory: { roleId: role.id, kind: 'self', title: `断网检索记录${index}`, content: '这份记录只通过关键词检索和正文入口读取。'.repeat(100), realm: 'real', epistemic: 'reported', sources: [event.id] }, expectedRevision: null, reason: '断网镜像检索验收' });
+  const memories = admin('memory.recall', { roleId: role.id, query: '断网检索' });
+  assert.ok(memories.items.length > 0 && memories.items.length <= 10 && memories.nextCursor);
+  assert.ok(memories.items.every(item => !('sources' in item) && !('content' in item) && item.read.tool === 'memory_read'));
+  const moreMemories = admin('memory.recall', { roleId: role.id, query: '断网检索', cursor: memories.nextCursor });
+  assert.ok(!moreMemories.items.some(item => memories.items.some(previous => previous.id === item.id)));
+  const memoryDetail = admin('memory.detail', { roleId: role.id, id: memories.items[0].id });
+  assert.ok(admin('payload.read', { roleId: role.id, id: memoryDetail.payloadId }).text.includes('关键词检索'));
   const continuity = admin('continuity.revise', { roleId: role.id, expectedRevision: null, data: { kind: 'thread', title: '镜像中的持续事项', content: '验证连续性备份恢复。', sources: [event.id] }, reason: '断网镜像验收' });
   assert.equal(admin('continuity.read', { roleId: role.id, id: continuity.id, raw: true }).revision, 1);
   assert.ok(admin('payload.read', { roleId: role.id, id: source.payloadId }).text.includes(event.id));
@@ -91,7 +99,7 @@ try {
   assert.equal(restoredPython.status, 0, restoredPython.stderr);
   const store = new Store('/data/tmp/image-restored/kwagent/state.sqlite');
   assert.equal(store.role('image-reasoning').reasoningEffort, 'off'); assert.equal(store.role('image-reasoning').state, 'paused');
-  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.deepEqual(store.role(role.id).preinjectSkills, role.preinjectSkills); assert.deepEqual(store.role(role.id).adminQQs, role.adminQQs); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); } finally { store.close(); }
+  try { assert.equal(store.integrity(), 'ok'); assert.equal(store.role(role.id).state, 'disabled'); assert.equal(store.role(role.id).sessionId, reset.sessionId); assert.deepEqual(store.role(role.id).preinjectSkills, role.preinjectSkills); assert.deepEqual(store.role(role.id).adminQQs, role.adminQQs); assert.equal(store.roles().some(item => item.id === disposable.id), false); assert.equal(store.db.prepare("SELECT revision FROM documents WHERE kind='continuity' AND id=?").get(continuity.id).revision, 1); assert.equal(store.memories(role.id, 100).length, 15); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, source.payloadId)).id, event.id); assert.equal((await new Payloads(store, '/data/tmp/image-restored/artifacts').value(role.id, memoryDetail.payloadId)).id, memories.items[0].id); } finally { store.close(); }
   admin('shutdown');
   const result = await Promise.race([exited, delay(20000, undefined, { ref: false }).then(() => { throw new Error('Harness 未在期限内停止'); })]); assert.equal(result[0], 0);
   console.log(JSON.stringify({ nonRoot: true, node: process.versions.node, harness: true, database: true, payload: true, singleInstance: true, backupRestore: true, noExternalNetwork: true }));

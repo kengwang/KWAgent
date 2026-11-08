@@ -33,7 +33,7 @@ try {
   await stop(); await start();
   assert.equal((await call('seed')).due, true);
   const contexts = await call('contexts');
-  assert.ok(contexts.every(value => value.memories.some(memory => memory.title === '红楼梦阅读')));
+  assert.ok(contexts.every(value => value.memories.length === 0));
   assert.equal((await call('stats')).operations.filter(item => item.tool === 'memory_query_expand').length, 0);
   admin('memory.recall', { roleId: id, query: '红楼梦阅读的后续讨论', semantic: true });
   admin('memory.recall', { roleId: id, query: '红楼梦阅读的后续讨论', semantic: true });
@@ -53,9 +53,10 @@ try {
   assert.equal(created.initialPersona, generated.initialPersona);
   assert.equal(admin('memory.list', { roleId: created.id }).items.filter(item => item.kind === 'world').length, generated.world.length);
   assert.deepEqual(created.groups, []); assert.deepEqual(created.contacts, []);
-  assert.ok((await call('contexts', { roleId: created.id, ageWorld: true })).every(value => value.memories.some(memory => memory.kind === 'world')), '后续经历增加后仍应提供已确认的世界设定');
+  assert.ok((await call('contexts', { roleId: created.id, ageWorld: true })).every(value => value.memories.length === 0), '世界资料按需查询');
+  assert.ok(admin('memory.recall', { roleId: created.id, kind: 'world' }).items.length, '初始世界资料可通过工具检索');
   const repair = process.env.KW_AUXILIARY_REPAIR_SAMPLE ? await call('repair', { sample: JSON.parse(await readFile(process.env.KW_AUXILIARY_REPAIR_SAMPLE, 'utf8')) }) : null;
-  const report = { actualHarness: true, actualModel: true, localContextRequests: 3, contextModelRequests: 0, explicitQueryRequests: 2, queryExpansionModelRequests: 1, sourceEvents: 20, consolidationModelRequests: operations.length, consolidationUsage: operations.map(item => ({ state: item.state, estimatedTokens: item.arguments.estimatedTokens, usage: item.result?.usage ?? null })), idempotent: true, characterGenerated: true, generatedWorldEntries: generated.world.length, generatedExpressions: generated.expressionExamples.length, createdState: created.state, initialWorldContext: true, repair, noSocialSends: true, root };
+  const report = { actualHarness: true, actualModel: true, localContextRequests: 3, contextModelRequests: 0, explicitQueryRequests: 2, queryExpansionModelRequests: 1, sourceEvents: 20, consolidationModelRequests: operations.length, consolidationUsage: operations.map(item => ({ state: item.state, estimatedTokens: item.arguments.estimatedTokens, usage: item.result?.usage ?? null })), idempotent: true, characterGenerated: true, generatedWorldEntries: generated.world.length, generatedExpressions: generated.expressionExamples.length, createdState: created.state, initialWorldToolRead: true, repair, noSocialSends: true, root };
   await writeFile('.artifacts/verification/auxiliary-cost-model.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {

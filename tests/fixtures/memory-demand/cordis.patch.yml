@@ -1,0 +1,3 @@
+- insert:
+    - id: kw-memory-demand-verification
+      name: kwagent-memory-demand-verification

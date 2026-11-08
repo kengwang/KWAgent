@@ -1,5 +1,5 @@
 import { BlockAssembler } from '@deepseek-ai/dsh-llm';
-import { consolidationInstructions, consolidationSchema, correctConsolidationOutput, parseConsolidationOutput, consolidationMessages, consolidationCorrectionInput } from '@kwagent/kw-mind';
+import { consolidationInstructions, consolidationSchema, parseConsolidationOutput, consolidationMessages, consolidationCorrectionInput } from '@kwagent/kw-mind';
 import { tokens } from '@kwagent/core';
 import { jsonrepair } from 'jsonrepair';
 
@@ -29,12 +29,12 @@ export function apply(ctx) {
         const estimatedTokens = messages.reduce((sum, message) => sum + tokens(message.content[0].text) + 8, tokens(consolidationInstructions));
         if (estimatedTokens > mind.config.budgets.consolidation) throw new Error('实际修正输入超过整理预算');
         const assembler = new BlockAssembler();
-        for await (const chunk of life.context.llm.stream({ provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'off', system: consolidationInstructions, messages, signal: AbortSignal.timeout(120000) })) assembler.push(chunk);
+        const model = mind.models.effective(life.store.role(id));
+        for await (const chunk of life.context.llm.stream({ provider: model.provider, model: model.model, reasoningEffort: 'off', system: consolidationInstructions, messages, signal: AbortSignal.timeout(120000) })) assembler.push(chunk);
         if (assembler.finish.kind !== 'stop') throw new Error(`修正没有完成：${assembler.finish.kind}`);
         const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('');
-        const corrected = correctConsolidationOutput(draft, text);
-        const result = parseConsolidationOutput(consolidationSchema, JSON.stringify(corrected), sample.input);
-        return send({ actualProductionFailure: true, schemaValid: true, estimatedTokens, withinBudget: true, originalOutputBytes: Buffer.byteLength(sample.output), correctionBytes: Buffer.byteLength(text), usage: assembler.usage, originalUsage: sample.originalUsage, patches: JSON.parse(jsonrepair(text)).length, saved: false, sourceOperationId: sample.operationId, memories: result.value.memories.length });
+        const result = parseConsolidationOutput(consolidationSchema, text, sample.input);
+        return send({ actualProductionFailure: true, schemaValid: true, estimatedTokens, withinBudget: true, originalOutputBytes: Buffer.byteLength(sample.output), correctionBytes: Buffer.byteLength(text), usage: assembler.usage, originalUsage: sample.originalUsage, format: 'business-object', saved: false, sourceOperationId: sample.operationId, memories: result.value.memories.length });
       }
       if (body.action === 'contexts') {
         if (body.ageWorld) {

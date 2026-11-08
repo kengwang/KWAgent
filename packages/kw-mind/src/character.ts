@@ -17,7 +17,7 @@ export async function generateCharacter(mind: Mind, value: unknown, signal: Abor
   if (selection.reasoningEffort && !info.reasoning?.efforts.some(effort => effort.id === selection.reasoningEffort)) throw new EvidenceError('所选模型不支持这个推理等级');
   let correction: { output: string; reason: string; operationId: string } | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const operation = mind.store.startOperation('main', null, 'role_generate', asJson({ ...input, ...correction ? { retryOf: correction.operationId } : {} }));
+    const operation = mind.store.startOperation('main', null, 'role_generate', asJson({ ...input, provider: selection.provider, model: selection.model, ...correction ? { retryOf: correction.operationId } : {} }));
     const assembler = new BlockAssembler();
     const messages: GenerateOptions['messages'] = [{ role: 'user', content: [{ type: 'text', text: input.idea }] }, ...correction ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: `只修正以下草稿的JSON格式与校验错误，保留创意和完整角色内容。字符串内的引号和换行必须正确转义，只返回一个完整JSON对象。错误：${correction.reason}\n草稿：\n${correction.output}` }] }] : []];
     try {

@@ -8,8 +8,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client';
 import type {} from '@deepseek-ai/dsh-client-locale/client';
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
-import { useEffect, useState } from 'react';
-import type { Role, Memory, LifePlan, Experience, Operation, Json, Extension } from '@kwagent/core';
+import { useEffect, useRef, useState } from 'react';
+import type { Role, Memory, MemoryHit, MemorySearchPage, LifePlan, Experience, Operation, Json, Extension } from '@kwagent/core';
 import contribution from '@kwagent/kw-panel/remote';
 import styles from './style.css?inline';
 import { RoleForm, PlanForm, RoleSkillForm } from './forms.tsx';
@@ -38,7 +38,11 @@ function Panel({ ctx }: { ctx: Context }) {
   const [query, setQuery] = useState('');
   const [scene, setScene] = useState('');
   const [peer, setPeer] = useState('');
-  const [found, setFound] = useState<Memory[] | null>(null);
+  const [found, setFound] = useState<MemoryHit[] | null>(null);
+  const [searchCursor, setSearchCursor] = useState<string | null>(null);
+  const [searchFilters, setSearchFilters] = useState<Record<string, unknown>>();
+  const searchEpoch = useRef(0);
+  useEffect(() => { searchEpoch.current++; setFound(null); setSearchCursor(null); setSearchFilters(undefined); }, [roleId, tab]);
   const [olderMemories, setOlderMemories] = useState<Memory[]>([]);
   const [memoryEnd, setMemoryEnd] = useState(false);
   const [moreRoles, setMoreRoles] = useState<Role[]>([]);
@@ -59,7 +63,6 @@ function Panel({ ctx }: { ctx: Context }) {
       const result = await ctx.remote.kwAgent.mutate(action, JSON.stringify(payload));
       if (!result.ok) throw new Error(result.error.message);
       const value = JSON.parse(result.value);
-      if (action === 'memory.revise') setFound(previous => previous?.map(memory => memory.id === value.id ? value as Memory : memory) ?? null);
       return value;
     } catch (error) { setError(error instanceof Error ? error.message : String(error)); throw error; }
     finally { setBusy(false); }
@@ -68,6 +71,16 @@ function Panel({ ctx }: { ctx: Context }) {
   const editRole = (id: string) => { void call('role.read', { roleId: id }).then(value => setEditing(value as Role)).catch(() => {}); };
   const manageModels = () => { setTab('模型配置'); setDetail(null); setRoleAction(null); setNotice(''); };
   const loadMemories = () => { void call('memory.list', { roleId, offset: allMemories.length }).then(value => { const page = value as { items: Memory[]; nextCursor: number | null }; setOlderMemories(previous => [...previous, ...page.items]); setMemoryEnd(page.nextCursor === null); }).catch(() => {}); };
+  const searchMemories = (more = false) => {
+    const filters = more ? searchFilters : { roleId, query, semantic: false, ...(tab === '世界' ? { kind: 'world' } : {}), ...(scene ? { scene } : {}), ...(peer ? { peerId: Number(peer) } : {}) };
+    if (!filters) return;
+    const epoch = more ? searchEpoch.current : ++searchEpoch.current;
+    void call('memory.recall', { ...filters, ...more && searchCursor ? { cursor: searchCursor } : {} }).then(result => {
+      if (epoch !== searchEpoch.current) return;
+      const page = result as MemorySearchPage;
+      setFound(previous => more ? [...previous ?? [], ...page.items] : page.items); setSearchCursor(page.nextCursor); setSearchFilters(filters);
+    }).catch(() => {});
+  };
   const editPlan = (id: string, owner = roleId) => { void call('record.read', { roleId: owner, kind: 'plan', id }).then(value => setEditingPlan(value as LifePlan)).catch(() => {}); };
   const planPage = useRecords<LifePlan>('plan', roleId, snapshot?.revision ?? 0, tab === '目标与安排', call);
   const extensionPage = useRecords<Extension>('extension', roleId, snapshot?.revision ?? 0, tab === '能力', call);
@@ -94,7 +107,7 @@ function Panel({ ctx }: { ctx: Context }) {
   const act = (action: string, payload?: unknown) => { void call(action, payload).catch(() => {}); };
   const roleItems: (Role & { runtime?: { state: string } })[] = [...new Map([...moreRoles, ...(snapshot?.roles ?? [])].map(role => [role.id, role])).values()];
   const allMemories = [...new Map([...olderMemories, ...(snapshot?.memories ?? [])].map(memory => [memory.id, memory])).values()];
-  const memories = (found ?? allMemories).map(memory => allMemories.find(current => current.id === memory.id && current.revision > memory.revision) ?? memory).filter(memory => tab === '人物' ? ['person', 'relationship'].includes(memory.kind) : tab === '世界' ? memory.kind === 'world' : true);
+  const memories = allMemories.filter(memory => tab === '人物' ? ['person', 'relationship'].includes(memory.kind) : tab === '世界' ? memory.kind === 'world' : true);
   const rawDetail = detail?.value && typeof detail.value === 'object' ? detail.value as Record<string, unknown> : null;
   const detailEvent = rawDetail?.summary && typeof rawDetail.summary === 'object' ? rawDetail.summary as Record<string, unknown> : rawDetail;
   return <div className="kw-panel" data-store-revision={snapshot?.revision ?? 0}>
@@ -133,12 +146,12 @@ function Panel({ ctx }: { ctx: Context }) {
         {tab === '人物' && <><People roleId={roleId} revision={snapshot.revision} call={call} open={open} /><ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['relationship', 'thread', 'conversation']} /></>}
         {tab === '记忆' && <ContinuityView roleId={roleId} revision={snapshot.revision} call={call} open={open} kinds={['journal', 'reflection']} />}
         {['记忆', '世界'].includes(tab) && <>
-          <form className="kw-search" onSubmit={event => { event.preventDefault(); if (roleId) void call('memory.recall', { roleId, query, semantic: Boolean(query), ...(scene ? { scene } : {}), ...(peer ? { peerId: Number(peer) } : {}) }).then(result => setFound(result as Memory[])).catch(() => {}); }}>
+          <form className="kw-search" onSubmit={event => { event.preventDefault(); if (roleId) searchMemories(); }}>
             <label>检索记忆<input value={query} onChange={event => setQuery(event.target.value)} placeholder="人物、共同经历或正在关注的问题" /></label>
             <label>会话类型<select value={scene} onChange={event => setScene(event.target.value)}><option value="">全部会话</option><option value="group">群聊</option><option value="private">私聊</option></select></label>
             <label>会话对象<input type="number" min="1" value={peer} onChange={event => setPeer(event.target.value)} placeholder="群号或联系人号" /></label><Button type="submit" disabled={!roleId || busy}>检索</Button>
           </form>
-          {memories.length ? memories.map(memory => <MemoryEditor key={memory.id} memory={memory} call={call} onDetail={setDetail} open={open} />) : <Empty text={roleId ? '相关认识形成后会出现在这里。' : '选择角色后可以查阅和检索记忆。'} />}
+          {found ? <>{found.map(memory => <article className="kw-entry" key={memory.id}><h3>{memory.title}</h3><p className="kw-muted">{memory.kind} · 修订 {memory.revision} · {memory.sourceCount} 项来源</p><p className="kw-prose">{memory.snippet}</p><div className="kw-actions"><Button onClick={() => open('memory.detail', { roleId, id: memory.id })}>阅读正文</Button><Button onClick={() => open('sources.list', { roleId, memoryId: memory.id })}>查看来源</Button><Button onClick={() => { void call('memory.read', { roleId, id: memory.id }).then(value => { setFound(null); setOlderMemories(previous => [value as Memory, ...previous.filter(item => item.id !== memory.id)]); }).catch(() => {}); }}>编辑这条认识</Button></div></article>)}{!found.length && <Empty text="没有匹配资料，可以调整关键词或筛选条件。" />}{searchCursor && <Button disabled={busy} onClick={() => searchMemories(true)}>读取更多检索结果</Button>}<Button onClick={() => setFound(null)}>返回记忆列表</Button></> : memories.length ? memories.map(memory => <MemoryEditor key={memory.id} memory={memory} call={call} onDetail={setDetail} open={open} />) : <Empty text={roleId ? '相关认识形成后会出现在这里。' : '选择角色后可以查阅和检索记忆。'} />}
           {roleId && !found && !memoryEnd && <Button disabled={busy} onClick={loadMemories}>读取更多认识</Button>}
         </>}
         {tab === '目标与安排' && <>

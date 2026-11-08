@@ -75,7 +75,6 @@ export class Life extends Service {
   private readonly dispatching = new Set<string>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingTasks = new Set<Promise<unknown>>();
-  private readonly contexts = new Map<string, string>();
   private readonly scenes = new Map<string, ContinuityScene>();
   private readonly continuityWork = new Map<string, Promise<void>>();
   private readonly toolViews = new Map<string, Json>();
@@ -258,7 +257,7 @@ export class Life extends Service {
     }
     // 投递可能正在等待本次会话切换；取消信号会在它写入 Agent 前拦截。
     await this.continuityWork.get(roleId);
-    this.contexts.delete(roleId); this.scenes.delete(roleId); this.ctx.kwMind.steps.delete(roleId); this.activities.release(roleId);
+    this.scenes.delete(roleId); this.ctx.kwMind.steps.delete(roleId); this.activities.release(roleId);
     this.policy.release(roleId);
     this.claimed.delete(roleId); this.prepared.delete(roleId);
   }
@@ -311,7 +310,6 @@ export class Life extends Service {
         }
         const hadInput = payload.messages.length > 0;
         const admitted: UserMessage[] = [];
-        const scheduleContext: string[] = [];
         const sceneEvents = payload.messages.flatMap(message => message.source.kind === 'kw-event' ? message.source.eventIds.map(id => this.store.event(id)) : []);
         let scene = sceneEvents.length ? this.sceneFor(sceneEvents) : payload.messages.length ? this.sceneFor([]) : this.scenes.get(roleId) ?? this.sceneFor([]);
         for (const message of payload.messages) {
@@ -325,7 +323,6 @@ export class Life extends Service {
             this.store.appendEvent({ id: `schedule:${message.id}`, accountId: role.accountId, roleId, source: 'schedule', type: 'scheduled-activity', occurredAt: now(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(checked) });
             admitted.push(checked);
             for (const notice of valid) if (notice.prompt.startsWith('KWAGENT_PLAN\n')) { const marker = JSON.parse(notice.prompt.slice('KWAGENT_PLAN\n'.length)); const plan = this.store.plan(marker.planId); scene = { ...scene, planIds: [...new Set([...scene.planIds, plan.id])], recordIds: [...new Set([...scene.recordIds, ...plan.relatedRecords])], contexts: [...new Map([...scene.contexts, ...plan.context ? [plan.context] : []].map(context => [`${context.scene}:${context.peerId}`, context])).values()], people: [...new Set([...scene.people, ...plan.context?.scene === 'private' ? [String(plan.context.peerId)] : []])] }; }
-            scheduleContext.push(JSON.stringify(checked.content));
             continue;
           }
           admitted.push(message);
@@ -333,12 +330,11 @@ export class Life extends Service {
         payload.messages.splice(0, payload.messages.length, ...admitted);
         // 重复通知可以被过滤，当前 turn 的工具结果仍需进入下一模型步骤。
         if (hadInput && !payload.messages.length && payload.step === 1) { this.policy.release(roleId); return { kind: 'reject' }; }
-        if (payload.messages.length) this.contexts.set(roleId, await this.ctx.kwMind.context(roleId, [scene.query, ...scheduleContext].filter(Boolean).join('\n'), payload.signal));
         this.scenes.set(roleId, scene);
         await this.syncContinuity(roleId);
         const prepared = this.prepared.get(roleId); if (!prepared) throw new Error('当前步骤尚未准备角色与Skill');
         const authorization = this.policy.prepare(roleId, payload.turn, sceneEvents, scene.planIds, hadInput);
-        const frozen = this.ctx.kwMind.freeze(roleId, this.contexts.get(roleId) ?? '{"memories":[]}', scene, this.ctx.kwLagrange.socialContext(roleId, scene.contexts), prepared.skills, prepared.identity, authorization, prepared.role);
+        const frozen = this.ctx.kwMind.freeze(roleId, '{"memories":[]}', scene, this.ctx.kwLagrange.socialContext(roleId, scene.contexts), prepared.skills, prepared.identity, authorization, prepared.role);
         const ref = await this.ctx.kwMind.payloads.put(roleId, `step:${role.sessionId}:${payload.turn}:${payload.step}`, asJson(JSON.parse(frozen)), payload.signal);
         appendPluginRecord(payload.agent.session, 'plugin:kwagent/context', asJson({ roleId, turn: payload.turn, step: payload.step, ...ref, estimatedTokens: tokens(frozen), inputs: payload.messages.map(message => message.id) }));
         const activity = this.activities.current(roleId); if (activity) this.store.link(activity.id, 'context', `${payload.turn}:${payload.step}`, asJson(ref));
@@ -367,6 +363,8 @@ export class Life extends Service {
         const executionId = this.store.invocationId(exec.token);
         if (this.activities.noProgress(roleId, exec.name, asJson(exec.arguments), asJson(result.isError ? result.error : result.value), exec)) decision.additionalContexts = [...decision.additionalContexts ?? [], { id: MessageId(`no-progress:${executionId}`), role: 'user', source: { kind: 'kw-event', roleId, eventIds: [`tool:${roleId}:${executionId}`] }, content: [{ type: 'text', text: '连续三次相同工具与参数得到相同结果，尚未观察到进展。请结合已有结果自主决定接下来的活动。' }] }];
         const content = decision.content ?? result.content;
+        const raw = asJson(result.isError ? result.error : result.value ?? null);
+        if (tokens(JSON.stringify(content)) <= this.config.budgets.tool && (['memory_recall', 'memory_read', 'continuity_read', 'payload_read'].includes(exec.name) || JSON.stringify(readable(raw)) === JSON.stringify(raw))) return decision;
         const value = asJson({ isError: result.isError, ...(result.isError ? { error: result.error } : {}), content, result, arguments: exec.arguments });
         const view = await this.ctx.kwMind.payloads.view(roleId, `tool:${roleId}:${executionId}`, value, this.config.budgets.tool, exec.signal);
         if (view === value) return decision;

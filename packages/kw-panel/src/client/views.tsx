@@ -79,7 +79,8 @@ export function DetailReader({ detail, roleId, call, onOpen }: { detail: Detail;
   const linked = (item: Record<string, any>) => {
     const id = item.id; const info = item.detail ?? {};
     if (item.payloadId) onOpen('payload.read', { roleId, id: item.payloadId });
-    else if (item.kind === 'continuity' || item.data?.kind || item.read === 'continuity.read') onOpen('continuity.read', { roleId, id });
+    else if (item.kind === 'continuity' || item.data?.kind || item.read === 'continuity.read' || item.read?.tool === 'continuity_read') onOpen('continuity.read', { roleId, id });
+    else if (item.read?.tool === 'memory_read') onOpen('memory.detail', { roleId, id });
     else if (item.entity && item.revision) onOpen('revision.read', { roleId, entity: item.entity, id, revision: item.revision });
     else if (item.kind === 'source' || item.kind === 'receipt') onOpen('source.read', { roleId, id });
     else if (item.kind === 'operation') onOpen('source.read', { roleId, id: info.id });

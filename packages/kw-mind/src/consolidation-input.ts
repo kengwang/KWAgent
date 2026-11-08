@@ -10,7 +10,7 @@ export interface ConsolidationInput {
 /** 工具调度和空内部输出没有新的经历内容，原始记录仍持续保存。 */
 export function hasConsolidationContent(event: Experience): boolean {
   const body = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? event.payload : {};
-  if (['initialize', 'resume-activity'].includes(event.type)) return false;
+  if (['initialize', 'resume-activity', 'background-result', 'scheduled-activity', 'condition-candidate', 'deferred-input'].includes(event.type)) return false;
   if (event.type === 'tool-result' && /^(continuity_|memory_|self_|life_plan|operation_read|capability_read|payload_read$|skill$|job_(list|output|kill)$|run_code$)/.test(String(body.name))) return false;
   if (event.type !== 'internal-activity') return true;
   const message = body.message && typeof body.message === 'object' && !Array.isArray(body.message) ? body.message : {};
@@ -22,9 +22,11 @@ const order = (first: { id: string; createdAt: string }, second: { id: string; c
 /** 既有认识置于稳定前缀，新来源与校验反馈置于末尾。 */
 export function consolidationMessages(input: ConsolidationInput) {
   const { id, accountId, name, initialPersona, persona, selfState, worldMode, expressionExamples } = input.role;
-  const known = { memories: [...input.memories].sort(order), continuity: [...input.continuity].sort(order), role: { id, accountId, name, initialPersona, persona, selfState, worldMode, expressionExamples } };
+  const memories = [...input.memories].sort(order).map(({ id, revision, kind, title, content, realm, epistemic, people }) => ({ id, revision, kind, title, content, realm, epistemic, people }));
+  const continuity = [...input.continuity].sort(order).map(record => { const { sources: _sources, memories: _memories, plans: _plans, relatedRecords: _related, ...data } = record.data; return { id: record.id, revision: record.revision, data }; });
+  const known = { role: { id, accountId, name, initialPersona, persona, selfState, worldMode, expressionExamples } };
   const incoming = { sources: input.sources };
-  return [known, incoming, ...input.validationFeedback ? [{ validationFeedback: input.validationFeedback }] : []].map(value => ({ role: 'user' as const, content: [{ type: 'text' as const, text: JSON.stringify(value) }] }));
+  return [known, { memories, continuity }, incoming, ...input.validationFeedback ? [{ validationFeedback: input.validationFeedback }] : []].map(value => ({ role: 'user' as const, content: [{ type: 'text' as const, text: JSON.stringify(value) }] }));
 }
 
 export function consolidationDue(events: Experience[], at = Date.now()): boolean {
@@ -40,7 +42,7 @@ export function relatedConsolidationRecords(input: ConsolidationInput, memories:
   const rank = (title: string, content: string, people: string[], evidence: string[]) =>
     (evidence.some(id => sources.has(id)) ? 100 : 0) + people.filter(person => text.includes(person)).length * 20 + terms.filter(term => `${title}\n${content}`.toLowerCase().includes(term)).length;
   const selectedMemories = memories.map(memory => ({ value: memory, score: rank(memory.title, memory.content, memory.people, memory.sources) })).filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 12).map(item => item.value);
-  const selectedContinuity = continuity.map(record => ({ value: record, score: rank(record.data.title, record.data.content, record.data.people, record.data.sources) + (record.data.kind === 'life' ? 10 : 0) })).filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 12).map(item => item.value);
+  const selectedContinuity = continuity.map(record => ({ value: record, score: rank(record.data.title, record.data.content, record.data.people, record.data.sources) })).filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 6).map(item => item.value);
   return { memories: selectedMemories, continuity: selectedContinuity };
 }
 

@@ -1,4 +1,4 @@
-import { recallSchema, type Memory, type Recall, type Store } from '@kwagent/core';
+import { type Memory, type Recall, type Store } from '@kwagent/core';
 
 /** 本地分词只生成检索候选，不解释经历或推断关系。 */
 export function queryTerms(text: string): string[] {
@@ -17,11 +17,11 @@ export function mergeRecall(lists: Memory[][], limit: number): Memory[] {
     const previous = scores.get(memory.id);
     scores.set(memory.id, { memory, score: (previous?.score ?? 0) + 1 / (60 + index) + memory.attention / 1000 });
   });
-  return [...scores.values()].sort((a, b) => b.score - a.score).slice(0, limit).map(item => item.memory);
+  return [...scores.values()].sort((a, b) => b.score - a.score || a.memory.id.localeCompare(b.memory.id)).slice(0, limit).map(item => item.memory);
 }
 
 export function localRecall(store: Store, query: Recall): Memory[] {
   const terms = [...new Set([query.query.trim(), ...queryTerms(query.query)])].filter(Boolean);
   if (!terms.length) return store.lexical(query).slice(0, query.limit);
-  return mergeRecall(terms.map(term => store.lexical(recallSchema.parse({ ...query, query: term, semantic: false }))), query.limit);
+  return mergeRecall(terms.map(term => store.lexical({ ...query, query: term, semantic: false })), query.limit);
 }

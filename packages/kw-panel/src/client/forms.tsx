@@ -48,12 +48,11 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
   const [tokens, setTokens] = useState(initial?.dailyTokens?.toString() ?? '');
   const [start, setStart] = useState(initial?.activeHours?.start ?? '');
   const [end, setEnd] = useState(initial?.activeHours?.end ?? '');
-  const [budget, setBudget] = useState(initial?.memoryTokens ?? 8192);
   return <form className="kw-form" aria-label="角色配置" onSubmit={event => {
     event.preventDefault();
     void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? (initialPersona || persona), persona, selfState, ...!initial ? { world: worldEntries, generationId } : {}, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), preinjectSkills: preinjectSkills.split(/[,，\s]+/).filter(Boolean), provider, model, chatPresetId: presets.chat || null, visionPresetId: presets.vision || null, imagePresetId: presets.image || null, reasoningEffort: reasoningEffort || null, worldMode: world,
       groups: numbers(groups), contacts: numbers(contacts), adminQQs: numbers(adminQQs), globalGroups: global, defaultPrivate: privateRole,
-      memoryTokens: budget, dailyRequests: requests ? Number(requests) : null, dailyTokens: tokens ? Number(tokens) : null,
+      dailyRequests: requests ? Number(requests) : null, dailyTokens: tokens ? Number(tokens) : null,
       activeHours: start || end ? { start, end } : null }).catch(() => {});
   }}>
     <h3>{initial ? '编辑角色' : '创建角色'}</h3>
@@ -91,7 +90,7 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
     <p>管理员 QQ 和实际消息来源会写入角色提示词，由角色判断请求与操作；昵称、群权限和转发不会改变配置的管理员身份。</p>
     <label className="kw-check"><input type="checkbox" checked={global} onChange={event => setGlobal(event.target.checked)} />接收账号全部未绑定群聊</label>
     <label className="kw-check"><input type="checkbox" checked={privateRole} onChange={event => setPrivateRole(event.target.checked)} />作为账号默认私聊角色</label>
-    <label>记忆上下文预算<input type="number" min="256" max="131072" required value={budget} onChange={event => setBudget(Number(event.target.value))} /></label>
+    <p className="kw-muted">历史记忆通过工具按需查询；当前生活和直接关联事项提供摘要。</p>
     <label>每日请求额度<input type="number" min="1" value={requests} onChange={event => setRequests(event.target.value)} placeholder="留空表示不设额度" /></label>
     <label>每日 Token 额度<input type="number" min="1" value={tokens} onChange={event => setTokens(event.target.value)} placeholder="留空表示不设额度" /></label>
     <label>活动开始时间<input type="time" value={start} onChange={event => setStart(event.target.value)} /></label>
