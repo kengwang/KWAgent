@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
-import type { Json, LifePlan, Role } from '@kwagent/core';
+import type { Json, LifePlan, Role, CharacterDraft } from '@kwagent/core';
 import { RoleModelPresets } from './models.tsx';
+import { CharacterGenerator } from './character.tsx';
 type Call = (action: string, payload?: unknown) => Promise<unknown>;
 const numbers = (text: string) => text.split(/[,，\s]+/).filter(Boolean).map(Number);
 function object(value: Json | undefined): Record<string, Json> { return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
@@ -10,6 +11,10 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
   const [name, setName] = useState(initial?.name ?? '');
   const [id, setId] = useState(initial?.id ?? '');
   const [persona, setPersona] = useState(initial?.persona ?? '');
+  const [initialPersona, setInitialPersona] = useState(initial?.initialPersona ?? '');
+  const [worldEntries, setWorldEntries] = useState<CharacterDraft['world']>([]);
+  const [generationId, setGenerationId] = useState<string>();
+  const [generating, setGenerating] = useState(false);
   const [selfState, setSelfState] = useState(initial?.selfState ?? '');
   const [examples, setExamples] = useState(initial?.expressionExamples.join('\n\n') ?? '');
   const [preinjectSkills, setPreinjectSkills] = useState(initial?.preinjectSkills.join('\n') ?? '');
@@ -46,20 +51,25 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
   const [budget, setBudget] = useState(initial?.memoryTokens ?? 8192);
   return <form className="kw-form" aria-label="角色配置" onSubmit={event => {
     event.preventDefault();
-    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? persona, persona, selfState, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), preinjectSkills: preinjectSkills.split(/[,，\s]+/).filter(Boolean), provider, model, chatPresetId: presets.chat || null, visionPresetId: presets.vision || null, imagePresetId: presets.image || null, reasoningEffort: reasoningEffort || null, worldMode: world,
+    void onSave({ id, name, accountId: initial?.accountId ?? 'main', initialPersona: initial?.initialPersona ?? (initialPersona || persona), persona, selfState, ...!initial ? { world: worldEntries, generationId } : {}, expressionExamples: examples.split(/\n\s*\n/).filter(value => value.trim()), preinjectSkills: preinjectSkills.split(/[,，\s]+/).filter(Boolean), provider, model, chatPresetId: presets.chat || null, visionPresetId: presets.vision || null, imagePresetId: presets.image || null, reasoningEffort: reasoningEffort || null, worldMode: world,
       groups: numbers(groups), contacts: numbers(contacts), adminQQs: numbers(adminQQs), globalGroups: global, defaultPrivate: privateRole,
       memoryTokens: budget, dailyRequests: requests ? Number(requests) : null, dailyTokens: tokens ? Number(tokens) : null,
       activeHours: start || end ? { start, end } : null }).catch(() => {});
   }}>
     <h3>{initial ? '编辑角色' : '创建角色'}</h3>
+    <fieldset className="kw-fields" disabled={generating}>
+    <RoleModelPresets call={call} revision={revision} values={presets} requiredChat={!initial || Boolean(initial.chatPresetId)} manageModels={manageModels} onSelect={(kind, id, preset) => { setPresets(previous => ({ ...previous, [kind]: id })); if (kind === 'chat') { setProvider(preset?.provider ?? initial?.provider ?? config.provider); setModel(preset?.model ?? initial?.model ?? config.model ?? ''); } }} />
+    {!initial && <CharacterGenerator chatPresetId={presets.chat} reasoningEffort={reasoningEffort} call={call} onBusy={setGenerating} onDraft={draft => {
+      setId(draft.id); setName(draft.name); setInitialPersona(draft.initialPersona); setPersona(draft.persona); setSelfState(draft.selfState); setExamples(draft.expressionExamples.join('\n\n')); setWorld(draft.worldMode); setWorldEntries(draft.world); setGenerationId(draft.generationId);
+    }} />}
     <label>标识<input required pattern="[A-Za-z0-9]([A-Za-z0-9_]|-){0,63}" disabled={Boolean(initial)} value={id} onChange={event => setId(event.target.value)} /></label>
     <label>名称<input required value={name} onChange={event => setName(event.target.value)} /></label>
+    {!initial && <label>初始设定<textarea rows={7} value={initialPersona} onChange={event => setInitialPersona(event.target.value)} placeholder="角色的身份、来历与世界观边界；留空使用人格内容。" /></label>}
     <label>人格<textarea required rows={9} value={persona} onChange={event => setPersona(event.target.value)} /></label>
     <label>自我状态<textarea value={selfState} onChange={event => setSelfState(event.target.value)} /></label>
     <label>表达示例<textarea rows={5} value={examples} onChange={event => setExamples(event.target.value)} placeholder="示例之间留空行，仅作为风格上下文。" /></label>
     <label>预注入 Skill 列表<textarea rows={4} value={preinjectSkills} onChange={event => setPreinjectSkills(event.target.value)} placeholder="每行填写一个已安装的 Skill 名称，例如 kwagent-life 或 lagrange。" /></label>
     <p>每个模型步骤自动读取并注入所选 Skill 正文；修改从下一步骤生效。引用资料仍按需读取，缺失或不可读取的 Skill 会明确报错。</p>
-    <RoleModelPresets call={call} revision={revision} values={presets} requiredChat={!initial || Boolean(initial.chatPresetId)} manageModels={manageModels} onSelect={(kind, id, preset) => { setPresets(previous => ({ ...previous, [kind]: id })); if (kind === 'chat') { setProvider(preset?.provider ?? initial?.provider ?? config.provider); setModel(preset?.model ?? initial?.model ?? config.model ?? ''); } }} />
     {initial && !presets.chat && <p className="kw-muted">当前聊天配置：{provider} / {model}。选择全局聊天方案后使用该方案。</p>}
     <label>对话推理等级<select aria-label="对话推理等级" value={reasoningEffort} disabled={busy || !reasoning} onChange={event => setReasoningEffort(event.target.value)}>
       <option value="">{presetReasoning ? `跟随聊天预设（${presetReasoning}）` : `跟随提供商默认值${reasoning?.defaultEffort ? `（${reasoning.defaultEffort}）` : ''}`}</option>
@@ -69,6 +79,12 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
     {reasoningError && <p role="status">无法读取模型推理等级：{reasoningError}</p>}
     <p>用于本角色的对话与工具推理，修改从下一模型步骤生效，并在重启后保留。记忆整理与检索扩展沿用辅助请求的现有策略。</p>
     <label>世界模式<select value={world} onChange={event => setWorld(event.target.value as Role['worldMode'])}><option value="real">现实生活</option><option value="fictional">共同虚构世界</option><option value="mixed">现实与虚构并存</option></select></label>
+    {!initial && worldEntries.length > 0 && <section className="kw-world-drafts" aria-label="生成的世界条目"><h4>世界条目</h4><p className="kw-muted">创建角色时一并保存，可在世界页面继续阅读和修订。</p>{worldEntries.map((entry, index) => <div className="kw-world-draft" key={index}>
+      <label>世界条目标题<input required aria-label={`世界条目 ${index + 1} 标题`} value={entry.title} onChange={event => setWorldEntries(previous => previous.map((item, offset) => offset === index ? { ...item, title: event.target.value } : item))} /></label>
+      <label>世界条目内容<textarea required rows={5} aria-label={`世界条目 ${index + 1} 内容`} value={entry.content} onChange={event => setWorldEntries(previous => previous.map((item, offset) => offset === index ? { ...item, content: event.target.value } : item))} /></label>
+      <label>条目情境<select aria-label={`世界条目 ${index + 1} 情境`} value={entry.realm} onChange={event => setWorldEntries(previous => previous.map((item, offset) => offset === index ? { ...item, realm: event.target.value as typeof item.realm } : item))}><option value="real">现实认识</option><option value="fictional">虚构设定</option><option value="mixed">现实与虚构并存</option></select></label>
+      <Button type="button" onClick={() => setWorldEntries(previous => previous.filter((_, offset) => offset !== index))}>移除此条目</Button>
+    </div>)}</section>}
     <label>绑定群聊<input value={groups} onChange={event => setGroups(event.target.value)} placeholder="使用逗号分隔真实群号" /></label>
     <label>绑定联系人<input value={contacts} onChange={event => setContacts(event.target.value)} /></label>
     <label>角色管理员 QQ<textarea rows={3} value={adminQQs} onChange={event => setAdminQQs(event.target.value)} placeholder="使用换行或逗号分隔。群主和群管理员不会自动获得角色管理权限。" /></label>
@@ -80,7 +96,8 @@ export function RoleForm({ initial, config, busy, call, revision, manageModels, 
     <label>每日 Token 额度<input type="number" min="1" value={tokens} onChange={event => setTokens(event.target.value)} placeholder="留空表示不设额度" /></label>
     <label>活动开始时间<input type="time" value={start} onChange={event => setStart(event.target.value)} /></label>
     <label>活动结束时间<input type="time" value={end} onChange={event => setEnd(event.target.value)} /></label>
-    <div className="kw-actions"><Button type="submit" variant="primary" disabled={busy}>保存角色</Button><Button onClick={onCancel}>取消</Button></div>
+    </fieldset>
+    <div className="kw-actions"><Button type="submit" variant="primary" disabled={busy || generating}>保存角色</Button><Button type="button" onClick={onCancel}>取消</Button></div>
   </form>;
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EvidenceError } from '@kwagent/core';
-import { asJson, ConflictError, continuityActive, continuityQuerySchema, continuityRequestSchema, continuitySchema, now, operationSchema, tokens, type AppConfig, type ContinuityQuery, type ContinuityRecord, type ContinuityRequest, type ContinuityScene, type Json, type MemoryInput, type Payloads, type Store } from '@kwagent/core';
+import { asJson, ConflictError, continuityActive, continuityQuerySchema, continuityRequestSchema, continuitySchema, now, operationSchema, tokens, executionOrigin, type AppConfig, type ContinuityQuery, type ContinuityRecord, type ContinuityRequest, type ContinuityScene, type Json, type MemoryInput, type Payloads, type Store } from '@kwagent/core';
 
 export const continuityGuidance = '生活、关系、话头、会话判断、表达、反思与日记分别保存。关系理解为主观认识，对方当前明确表达优先。表达到两条、反思到两条，实例只供风格参考。可以旁听、简短回应、自然结束，不要求每次提问；新内容与附件仍需感知。主动联系前考虑真实近期发送、对方回复、来源场合、已结束话头和结果未知操作。计划与准备发送不代表已执行。工具失败或结果未知不能完成现实活动。自己的日记、反思、风格及声明不能变成外部事实。使用 continuity_read/revise 保存连续性；life_plan 的 review/contact 只安排重新判断。没有事件与安排时可以休息，不要求每日问候、日记或反思。';
 
@@ -35,6 +35,7 @@ export class Continuity {
     }
     if (id === `role:${roleId}`) return 'setting';
     const event = this.store.event(id); if (event.roleId !== roleId) throw new Error('来源属于其他角色');
+    if (event.type === 'character-setting') return 'setting';
     if (event.source === 'milky') return 'reported';
     if (event.source === 'manual') return 'reported';
     if (event.source === 'schedule' || ['initialize', 'condition-candidate'].includes(event.type)) return 'intent';
@@ -119,7 +120,8 @@ export class Continuity {
         }
         if (previous?.data.kind === 'thread' && ['resolved', 'declined', 'cancelled', 'expired'].includes(previous.data.status) && ['active', 'deferred'].includes(data.status) && !suppliedSources.some(source => !previous.data.sources.includes(source))) throw new EvidenceError('重新开启话头需要新的来源');
       }
-      const activityId = this.store.meta(`activity:${roleId}`) || null;
+      const origin = executionOrigin.getStore();
+      const activityId = origin?.roleId === roleId ? origin.activityId : this.store.meta(`activity:${roleId}`) || null;
       const record = continuitySchema.parse({ id, roleId, data, revision: (previous?.revision ?? 0) + 1, createdAt: previous?.createdAt ?? clock, updatedAt: clock, actor, reason: input.reason, activityId });
       this.store.put('continuity', id, roleId, asJson(record), input.expectedRevision, actor, input.reason);
       this.store.db.prepare('DELETE FROM continuity_sources WHERE record_id=?').run(id);

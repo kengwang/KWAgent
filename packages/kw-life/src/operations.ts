@@ -6,7 +6,8 @@ import { join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { check } from 'proper-lockfile';
 import { z } from 'zod';
-import { asJson, errorText, memoryInputSchema, now, recallSchema, roleInputSchema, roleSchema, rolePatchSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema, modelPresetWriteSchema } from '@kwagent/core';
+import { asJson, errorText, memoryInputSchema, now, recallSchema, roleSchema, rolePatchSchema, redact, SCHEMA_VERSION, summary, continuityRequestSchema, modelPresetWriteSchema, characterCreateSchema } from '@kwagent/core';
+import { generateCharacter } from '@kwagent/kw-mind';
 import type { Json } from '@kwagent/core';
 import type { Life } from './index.ts';
 import { planRequestSchema } from './plans.ts';
@@ -51,7 +52,11 @@ export class Operations {
       case 'task.cancel': { const input = z.object({ roleId: z.string(), id: z.string() }).strict().parse(value); return asJson(life.tasks.cancel(input.roleId, input.id)); }
       case 'status': return life.snapshot(typeof value === 'object' && value !== null && 'roleId' in value && typeof value.roleId === 'string' ? value.roleId : undefined);
       case 'doctor': return asJson({ node: process.versions.node, bunRuntime: Boolean(process.versions.bun), database: life.store.integrity(), schema: life.store.db.prepare('PRAGMA user_version').get(), started: life.started, error: life.startupError, mcp: life.context.kwLagrange.client.status, events: life.context.kwLagrange.events.status, visionConfigured: Boolean(life.config.vision.model && life.config.vision.baseUrl) });
-      case 'role.create': return asJson(await life.create(roleInputSchema.parse(value)));
+      case 'role.generate': return asJson(await generateCharacter(life.context.kwMind, value, AbortSignal.timeout(180000)));
+      case 'role.create': {
+        const { world, generationId, ...input } = characterCreateSchema.parse(value);
+        return asJson(await life.create(input, world, generationId));
+      }
       case 'role.prepare': {
         const input = z.object({ id: z.string() }).parse(value); const handle = await life.ensure(input.id);
         const engine = life.context.agentPresets.serviceFor(handle.agent, 'compaction'); const config = (engine as unknown as { config?: { maxTokens?: number } })?.config;

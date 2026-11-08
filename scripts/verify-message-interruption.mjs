@@ -55,6 +55,8 @@ try {
   await until(async () => { try { return (await readFile(observationsPath, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line)).find(item => item.stage === 'group'); } catch (error) { if (error.code === 'ENOENT') return false; throw error; } }, '模型处理新消息');
   const observed = admin('events', { roleId: id, limit: 200 }).items;
   assert.equal(admin('status', { roleId: id }).roles.find(role => role.id === id).runtime.error, null);
+  const continued = admin('record.read', { roleId: id, kind: 'operation', id: consolidation.id });
+  assert.notEqual(continued.state, 'failed', '新输入不能取消并重做已开始的整理');
   admin('role.control', { id, state: 'paused' });
   const calls = observed.filter(item => item.type === 'tool-result').map(item => {
     const event = payload(admin('source.read', { roleId: id, id: item.id }).payloadId);
@@ -63,13 +65,13 @@ try {
   });
   assert.ok(calls.some(call => call.name === 'skill' && call.arguments.name === 'kwagent-life'), '模型必须实际加载运行Skill');
   assert.ok(calls.every(call => !call.isError), '内部工具参数与来源应有效');
-  const cancelled = admin('record.read', { roleId: id, kind: 'operation', id: consolidation.id });
-  assert.equal(cancelled.state, 'failed', '收尾请求应在新输入到达后取消');
+  const settled = admin('record.read', { roleId: id, kind: 'operation', id: consolidation.id });
+  assert.ok(['succeeded', 'failed'].includes(settled.state), '暂停应等待后台整理结束或确认取消');
   const life = admin('continuity.read', { roleId: id, id: `life:${id}`, raw: true });
   assert.equal(life.data.kind, 'life');
   assert.ok(life.data.memories.length > 0);
   assert.ok(life.data.memories.every(value => admin('memory.read', { roleId: id, id: value })));
-  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationInterrupted: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, noSocialSends: true };
+  const report = { roleId: id, skillLoaded: true, actualModel: true, realFileRead: true, validMemoryReferences: true, internalToolErrors: 0, consolidationSurvivedNewInput: true, inputAccepted: accepted.id, inputAcceptanceMs: elapsed, responseRecorded: true, noSocialSends: true };
   await mkdir('.artifacts/verification', { recursive: true });
   await writeFile('.artifacts/verification/message-interruption.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

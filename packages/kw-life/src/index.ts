@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, preparePython } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, preparePython, createCharacter, worldSettingSchema } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store, ContinuityScene } from '@kwagent/core';
 import { mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -151,11 +151,11 @@ export class Life extends Service {
     const supported = await this.reasoningOptions(role.provider, role.model);
     if (!supported.efforts.some(effort => effort.id === role.reasoningEffort)) throw new Error(`模型 ${role.provider}/${role.model} 不支持推理等级 ${role.reasoningEffort}；可选：${supported.efforts.map(effort => effort.id).join('、') || '跟随提供商默认值'}`);
   }
-  async create(input: RoleInput): Promise<Role> {
+  async create(input: RoleInput, world: z.infer<typeof worldSettingSchema>[] = [], generationId?: string): Promise<Role> {
     const parsed = this.ctx.kwMind.models.effective(roleInputSchema.parse(input));
     if (parsed.accountId !== 'main') throw new Error('当前 Milky 连接的账号标识为 main');
     await this.validateReasoning(parsed);
-    const role = this.store.createRole({ ...parsed, memoryTokens: parsed.memoryTokens ?? this.config.memoryTokens });
+    const role = createCharacter(this.store, { ...parsed, memoryTokens: parsed.memoryTokens ?? this.config.memoryTokens }, world, generationId);
     if (role.state === 'active') this.track(this.control(role.id, 'active', false), role.id);
     return role;
   }
@@ -384,7 +384,6 @@ export class Life extends Service {
       });
       agentCtx.on('session/event', (_session, event) => {
         try {
-        if (event.type === 'agent/inbox/spliced') queueMicrotask(() => { if (agent.inbox.nextStep.length || agent.inbox.nextTurn.length) this.stopping.get(roleId)?.abort(); });
         this.activities.event(roleId, role.sessionId, event);
         if (event.type === 'assistant/message') this.store.appendEvent({ id: `assistant:${roleId}:${role.sessionId}:${event.seq}`, accountId: role.accountId, roleId, source: 'system', type: 'internal-activity', occurredAt: new Date(event.time).toISOString(), scene: null, peerId: null, senderId: null, messageSeq: null, self: true, payload: asJson(event.data) });
         if (event.type === 'tool/result') this.track(this.tasks.consume(roleId, String(event.data.message.toolCallId), !event.data.message.isError), roleId);
@@ -419,7 +418,7 @@ export class Life extends Service {
   private day(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: this.config.timeZone }).format(new Date()); }
   async retryDeferredMemory(roleId: string): Promise<void> {
     const status = this.ctx.kwMind.consolidationStatus(roleId);
-    if (!status || status.status !== 'deferred' || (status.retryAt ?? Infinity) > Date.now()) return;
+    if (status?.retryAt && status.retryAt > Date.now()) return;
     await this.consolidateInBackground(roleId);
   }
   private consolidateInBackground(roleId: string): Promise<void> {
@@ -430,7 +429,7 @@ export class Life extends Service {
   private async runBackgroundConsolidation(roleId: string): Promise<void> {
     const status = this.ctx.kwMind.consolidationStatus(roleId);
     const handle = this.handles.get(roleId);
-    if (status?.retryAt && status.retryAt > Date.now() || this.admission(roleId) || !handle || handle.agent.status !== 'idle' || this.stopping.has(roleId) || !this.store.unprocessed(roleId, 1).length || this.store.pending(roleId, 1).length || handle.agent.inbox.nextTurn.length || handle.agent.inbox.nextStep.length) return;
+    if (status?.retryAt && status.retryAt > Date.now() || this.admission(roleId) || !handle || handle.agent.status !== 'idle' || this.stopping.has(roleId) || !this.ctx.kwMind.consolidationDue(roleId) || this.store.pending(roleId, 1).length || handle.agent.inbox.nextTurn.length || handle.agent.inbox.nextStep.length) return;
     const controller = new AbortController(); this.stopping.set(roleId, controller);
     try { await this.ctx.kwMind.consolidate(handle.agent, roleId, controller.signal); if (!controller.signal.aborted && !this.admission(roleId)) await this.syncContinuity(roleId); }
     catch (error) { if (!controller.signal.aborted) throw error; }
@@ -463,7 +462,6 @@ export class Life extends Service {
     this.enqueue(event.roleId);
   }
   enqueue(roleId: string): void {
-    if (this.store.pending(roleId, 1).length) this.stopping.get(roleId)?.abort();
     if (this.timers.has(roleId) || this.dispatching.has(roleId) || this.admission(roleId)) return;
     const timer = setTimeout(() => {
       this.timers.delete(roleId);

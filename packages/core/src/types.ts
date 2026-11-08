@@ -89,7 +89,7 @@ export const recallSchema = z.object({
   realm: realmSchema.optional(), person: z.string().optional(), since: z.string().optional(),
   until: z.string().optional(), limit: z.number().int().min(1).max(100).default(20),
   scene: z.enum(['group', 'private']).optional(), peerId: z.number().int().positive().optional(),
-  semantic: z.boolean().default(true), archived: z.boolean().default(false),
+  semantic: z.boolean().default(false), archived: z.boolean().default(false),
 });
 export type Recall = z.infer<typeof recallSchema>;
 

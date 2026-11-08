@@ -26,6 +26,15 @@ test('整理输出中的无效来源作为可修正的依据错误，验证全�
     assert.equal(store.history('role', 'alice').length, 1);
   } finally { store.close(); }
 });
+test('生成和人工确认的世界设定不能在后续整理中变成外部事实', () => {
+  const { store, module, event } = environment();
+  try {
+    const setting = store.appendEvent({ ...event, id: randomUUID(), type: 'character-setting', payload: { meaning: '人工确认的世界设定', settings: [] } }).event;
+    assert.equal(module.sourceMeaning('alice', setting.id), 'setting');
+    assert.throws(() => module.assertMemory({ roleId: 'alice', kind: 'world', title: '世界设定', content: '虚构环境与规则', realm: 'fictional', epistemic: 'observed', sources: [setting.id], people: [], aliases: [], archived: false, attention: 0.8 }), EvidenceError);
+  } finally { store.close(); }
+});
+
 test('连续性修订保留来源、严格角色归属和CAS，结束话头后需要新依据重新开启', () => {
   const { store, module, base, request } = environment();
   try {
