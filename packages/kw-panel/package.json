@@ -1,5 +1,5 @@
 {
-  "name": "@kwagent/kw-panel", "version": "0.9.0", "type": "module",
+  "name": "@kwagent/kw-panel", "version": "0.9.1", "type": "module",
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" },

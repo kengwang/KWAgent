@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { Store, Payloads, loadConfig, roleInputSchema, recallSchema, continuityDataSchema, executionOrigin, EvidenceError } from '@kwagent/core';
+import { readFile } from 'node:fs/promises';
+import { Store, Payloads, loadConfig, roleInputSchema, recallSchema, continuityDataSchema, executionOrigin, EvidenceError, planSchema } from '@kwagent/core';
 import { Continuity } from '../packages/kw-mind/src/continuity.ts';
 import { consolidationSchema } from '../packages/kw-mind/src/index.ts';
 import { consolidationDue, consolidationMessages, relatedConsolidationRecords, consolidationCorrectionInput, type ConsolidationInput } from '../packages/kw-mind/src/consolidation-input.ts';
@@ -67,12 +68,17 @@ test('整理只携带相关认识，格式补全不接受未知修订或改变�
   } finally { store.close(); }
 });
 
-test('后台连续性修订不会关联到随后开始的活动', () => {
+test('后台连续性修订与后续计划同步不会关联到随后开始的活动', async () => {
   const { store, input, continuity, event } = environment();
   try {
     store.put('activity', 'later-activity', 'reader', { id: 'later-activity', roleId: 'reader', sessionId: input.role.sessionId, turn: 1, startSeq: 0, startedAt: new Date().toISOString(), endedAt: null, state: 'running', revision: 1, accepted: 0, steps: 0, sends: { succeeded: 0, failed: 0, unknown: 0 } }, null, 'system', '实际活动记录');
     store.setMeta('activity:reader', 'later-activity');
-    const record = executionOrigin.run({ roleId: 'reader', activityId: null, taskId: 'background-consolidation' }, () => continuity.revise('reader', { expectedRevision: null, reason: '阅读后的真实想法', data: continuityDataSchema.parse({ kind: 'reflection', title: '阅读节奏', content: '先回应对方正在阅读的内容。', sources: [event.id] }) }, 'consolidator'));
+    const record = await executionOrigin.run({ roleId: 'reader', activityId: null, taskId: 'background-consolidation' }, async () => {
+      const record = continuity.revise('reader', { expectedRevision: null, reason: '阅读后的真实想法', data: continuityDataSchema.parse({ kind: 'reflection', title: '阅读节奏', content: '先回应对方正在阅读的内容。', sources: [event.id] }) }, 'consolidator');
+      await readFile(join(process.cwd(), 'package.json'), 'utf8');
+      store.savePlan(planSchema.parse({ id: 'background-review', roleId: 'reader', kind: 'goal', title: '阅读后续', instruction: '继续了解阅读进展', condition: null, timing: null, context: null, sources: [event.id], relatedRecords: [record.id], scheduleId: null, status: 'pending', revision: 1, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }), null, 'reader');
+      return record;
+    });
     assert.equal(record.activityId, null);
     assert.deepEqual(store.links('later-activity'), []);
     assert.equal(store.events(input.role.id, 10).length, 1);

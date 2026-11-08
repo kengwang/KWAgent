@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-jobs';
 import type {} from '@deepseek-ai/dsh-compaction';
 import type {} from '@kwagent/kw-mind';
 import type {} from '@kwagent/kw-lagrange';
-import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, preparePython, createCharacter, worldSettingSchema } from '@kwagent/core';
+import { asJson, CapabilityError, errorText, now, registerTool, roleInputSchema, roleSchema, publicConfig, redact, tokens, summary, readable, continuityActive, preparePython, createCharacter, worldSettingSchema, executionOrigin } from '@kwagent/core';
 import type { AppConfig, Experience, Json, Role, RoleInput, Store, ContinuityScene } from '@kwagent/core';
 import { mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -431,7 +431,7 @@ export class Life extends Service {
     const handle = this.handles.get(roleId);
     if (status?.retryAt && status.retryAt > Date.now() || this.admission(roleId) || !handle || handle.agent.status !== 'idle' || this.stopping.has(roleId) || !this.ctx.kwMind.consolidationDue(roleId) || this.store.pending(roleId, 1).length || handle.agent.inbox.nextTurn.length || handle.agent.inbox.nextStep.length) return;
     const controller = new AbortController(); this.stopping.set(roleId, controller);
-    try { await this.ctx.kwMind.consolidate(handle.agent, roleId, controller.signal); if (!controller.signal.aborted && !this.admission(roleId)) await this.syncContinuity(roleId); }
+    try { await executionOrigin.run({ roleId, activityId: null, taskId: `consolidation:${roleId}` }, async () => { await this.ctx.kwMind.consolidate(handle.agent, roleId, controller.signal); if (!controller.signal.aborted && !this.admission(roleId)) await this.syncContinuity(roleId); }); }
     catch (error) { if (!controller.signal.aborted) throw error; }
     finally { if (this.stopping.get(roleId) === controller) this.stopping.delete(roleId); }
   }
