@@ -6,6 +6,10 @@
 
 真实Harness的run_code调用memory_recall和continuity_read完成工具管道检查，返回结构与游标保持可读。真实浏览器通过摘要分页、游标失效后保留结果、完整负载、来源跳转、并发编辑保留输入、角色表单、1440像素桌面、390像素窄屏与页面重载检查。截图位于output/playwright/memory-demand-*.png，结果位于.artifacts/verification/memory-demand-panel.json。
 
+重放workbuddy2api保存的21份真实失败输出，其中7份经宿主确定性补全后通过格式校验，14份继续拒绝；该检查没有调用模型或提交资料，不代表来源与业务语义已经通过。结果位于.artifacts/verification/consolidation-failure-replay.json。
+
+Linux amd64候选镜像在network=none下通过非root、Node 24.18.0、真实Harness、SQLite、摘要分页与完整负载读取检查。完整备份恢复后，十五条检索记录、连续性、Session归属、对象内容及持久Python环境均保持可读。构建与检查记录位于.artifacts/verification/on-demand-docker-*.log。
+
 workbuddy2api实际模型请求返回429 / model_quota，提示北京时间2026年11月9日13:11:08重置。用户选择本次记录额度阻塞；未将其他提供商、模拟输出或离线工具检查记为该线路行为验收通过。真实失败日志位于.artifacts/verification/memory-demand-model.log。
 
 ## v0.9.1
