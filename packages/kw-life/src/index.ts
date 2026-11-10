@@ -39,6 +39,7 @@ import { retireStepContexts } from './step-context.ts';
 import { contextUpdateGuidance, prepareContextUpdate } from './context-updates.ts';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import { workspaceDomainState } from '@deepseek-ai/dsh-workspace';
+import { DailyMemory } from './daily-memory.ts';
 import type {} from '@deepseek-ai/dsh-storage-domain';
 
 export { Plans, planRequestSchema, timingSchema } from './plans.ts';
@@ -66,6 +67,7 @@ export class Life extends Service {
   readonly lifecycle: RoleLifecycle;
   readonly roleSkills: RoleSkills;
   readonly policy: RolePolicy;
+  readonly dailyMemory: DailyMemory;
   readonly store: Store;
   readonly config: AppConfig;
   maintenance = false;
@@ -96,6 +98,7 @@ export class Life extends Service {
     super(ctx, 'kwLife');
     this.store = ctx.kwMind.store;
     this.config = ctx.kwMind.config;
+    this.dailyMemory = new DailyMemory(this.store, this.config.timeZone);
     this.sessions = ctx.sessions;
     this.jobs = ctx.jobs;
     this.plans = new Plans(ctx, ctx.kwMind.store);
@@ -353,7 +356,6 @@ export class Life extends Service {
         this.runtime.set(roleId, { state: this.admission(roleId) ?? (status === 'running' ? 'running' : 'waiting'), error: null, lastActivityAt: now() });
         this.store.changes.emit('change', this.store.revision());
         if (status === 'idle' && this.store.pending(roleId).length) this.enqueue(roleId);
-        else if (status === 'idle') this.track(this.consolidateInBackground(roleId), roleId);
       });
       agentCtx.on('agent/error', ({ error }) => { this.store.recoverDeliveries(roleId, [...this.activities.accepted.get(roleId) ?? []]); this.fail(error, roleId); });
       agentCtx.on('tools/post-execute', async (exec, result, next) => {
@@ -414,9 +416,8 @@ export class Life extends Service {
     return handle;
   }
   private day(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: this.config.timeZone }).format(new Date()); }
-  async retryDeferredMemory(roleId: string): Promise<void> {
-    const status = this.ctx.kwMind.consolidationStatus(roleId);
-    if (status?.retryAt && status.retryAt > Date.now()) return;
+  async checkDailyMemory(roleId: string): Promise<void> {
+    if (!this.dailyMemory.due(this.store.role(roleId))) return;
     await this.consolidateInBackground(roleId);
   }
   private consolidateInBackground(roleId: string): Promise<void> {
@@ -427,7 +428,9 @@ export class Life extends Service {
   private async runBackgroundConsolidation(roleId: string): Promise<void> {
     const status = this.ctx.kwMind.consolidationStatus(roleId);
     const handle = this.handles.get(roleId);
-    if (status?.retryAt && status.retryAt > Date.now() || this.admission(roleId) || !handle || handle.agent.status !== 'idle' || this.stopping.has(roleId) || !this.ctx.kwMind.consolidationDue(roleId) || this.store.pending(roleId, 1).length || handle.agent.inbox.nextTurn.length || handle.agent.inbox.nextStep.length) return;
+    if (status?.retryAt && status.retryAt > Date.now() || this.admission(roleId) || !handle || handle.agent.status !== 'idle' || this.stopping.has(roleId) || this.store.pending(roleId, 1).length || handle.agent.inbox.nextTurn.length || handle.agent.inbox.nextStep.length) return;
+    if (!this.dailyMemory.claim(this.store.role(roleId))) return;
+    if (!this.ctx.kwMind.hasPendingConsolidation(roleId)) return;
     const controller = new AbortController(); this.stopping.set(roleId, controller);
     try { await executionOrigin.run({ roleId, activityId: null, taskId: `consolidation:${roleId}` }, async () => { await this.ctx.kwMind.consolidate(handle.agent, roleId, controller.signal); if (!controller.signal.aborted && !this.admission(roleId)) await this.syncContinuity(roleId); }); }
     catch (error) { if (!controller.signal.aborted) throw error; }

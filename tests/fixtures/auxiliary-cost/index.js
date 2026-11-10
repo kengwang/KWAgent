@@ -19,7 +19,7 @@ export function apply(ctx) {
         life.store.saveMemory({ roleId: id, kind: 'episode', title: '红楼梦阅读', content: '希望延续红楼梦阅读讨论。', realm: 'real', epistemic: 'reported', people: ['10001'], aliases: [], sources: [source.id], archived: false, attention: 0.5 }, null, 'owner', '实际输入资料');
         life.store.markConsolidated([source.id]);
         for (let index = 0; index < 20; index++) life.manual(id, `阅读进度更新：今天阅读红楼梦第${index + 1}回，注意到人物之间的误解，之后想结合各自处境继续讨论。`, 'manual', { context: { scene: 'private', peerId: 10001 }, sender: { id: 10001, nickname: '阅读者' } });
-        return send({ due: mind.consolidationDue(id), pending: life.store.unprocessed(id, 100).length });
+        return send({ pending: life.store.unprocessed(id, 100).length });
       }
       if (body.action === 'repair') {
         const sample = body.sample;

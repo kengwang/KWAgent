@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { Store, Payloads, loadConfig, roleInputSchema, recallSchema, continuityDataSchema, executionOrigin, EvidenceError, planSchema } from '@kwagent/core';
 import { Continuity } from '../packages/kw-mind/src/continuity.ts';
 import { consolidationSchema } from '../packages/kw-mind/src/index.ts';
-import { consolidationDue, consolidationMessages, relatedConsolidationRecords, consolidationCorrectionInput, type ConsolidationInput } from '../packages/kw-mind/src/consolidation-input.ts';
+import { consolidationMessages, relatedConsolidationRecords, consolidationCorrectionInput, type ConsolidationInput } from '../packages/kw-mind/src/consolidation-input.ts';
 import { parseConsolidationOutput } from '../packages/kw-mind/src/consolidation-output.ts';
 import { localRecall } from '../packages/kw-mind/src/local-recall.ts';
 
@@ -32,15 +32,9 @@ test('自然语句通过真实FTS与中文分词检索，角色过滤和新增�
   } finally { store.close(); }
 });
 
-test('整理合并短批次，到时处理零散来源，修复反馈保留原始输入前缀', () => {
-  const { store, event, input } = environment();
+test('整理修复反馈保留原始输入前缀', () => {
+  const { store, input } = environment();
   try {
-    const at = Date.parse(event.receivedAt);
-    assert.equal(consolidationDue([event], at + 59999), false);
-    assert.equal(consolidationDue([event], at + 60000), true);
-    const events = [event];
-    for (let i = 0; i < 15; i++) events.push(store.appendEvent({ ...event, id: randomUUID(), payload: { text: `补充阅读资料${i}` } }).event);
-    assert.equal(consolidationDue(events, at), true);
     const first = consolidationMessages(input);
     const repair = consolidationMessages({ ...input, validationFeedback: '仅修正无效字段，保留其余内容。' });
     assert.deepEqual(repair.slice(0, first.length), first);

@@ -31,7 +31,7 @@ try {
   admin('extension', { roleId: id, request: { action: 'install', id: 'auxiliary-cost', spec: resolve('tests/fixtures/auxiliary-cost') } });
   admin('extension', { roleId: id, request: { action: 'enable', id: 'auxiliary-cost' } });
   await stop(); await start();
-  assert.equal((await call('seed')).due, true);
+  assert.ok((await call('seed')).pending >= 20);
   const contexts = await call('contexts');
   assert.ok(contexts.every(value => value.memories.length === 0));
   assert.equal((await call('stats')).operations.filter(item => item.tool === 'memory_query_expand').length, 0);

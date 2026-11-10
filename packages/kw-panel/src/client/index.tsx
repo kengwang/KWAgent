@@ -127,7 +127,7 @@ function Panel({ ctx }: { ctx: Context }) {
         {role && tab !== '模型配置' && <div className="kw-actions"><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'active' })}>启用</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'paused' })}>暂停</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => act('role.control', { id: role.id, state: 'stopped' })}>停止</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'reset', role }); }}>重置对话</Button><Button disabled={busy || Boolean(roleAction)} onClick={() => { setNotice(''); setRoleAction({ kind: 'delete', role }); }}>删除角色</Button></div>}
       </header>
       {notice && <p role="status">{notice}</p>}
-      {!globalModels && role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，群聊继续运行，空闲后重新整理。</p>}
+      {!globalModels && role?.memoryStatus?.status === 'deferred' && <p role="status" className="kw-prose">记忆待整理：{role.memoryStatus.reason}。原始经历已保留，下次每日02:00整理时继续；角色不可执行时顺延。</p>}
       {roleAction && <section className="kw-error" role="dialog" aria-labelledby="kw-role-action-title">
         <h3 id="kw-role-action-title">{roleAction.kind === 'reset' ? '重置当前对话' : '删除角色'}</h3>
         <p>{roleAction.kind === 'reset' ? `为 ${roleAction.role.name} 创建空白会话，保留人设、长期记忆、人物关系和角色目标与安排。当前活动、后台任务及原会话的原生提醒将停止，未接纳的外部消息继续保留。` : `停止 ${roleAction.role.name}，解除会话绑定并取消后续安排。原始经历、记忆与修订历史保留；角色标识为历史归属保留，重新创建时使用新标识。`}</p>

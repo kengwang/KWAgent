@@ -29,11 +29,6 @@ export function consolidationMessages(input: ConsolidationInput) {
   return [known, { memories, continuity }, incoming, ...input.validationFeedback ? [{ validationFeedback: input.validationFeedback }] : []].map(value => ({ role: 'user' as const, content: [{ type: 'text' as const, text: JSON.stringify(value) }] }));
 }
 
-export function consolidationDue(events: Experience[], at = Date.now()): boolean {
-  const eligible = events.filter(hasConsolidationContent);
-  return events.length > 0 && (!eligible.length || eligible.length >= 16 || at - Date.parse(eligible[0]!.receivedAt) >= 60000);
-}
-
 /** 仅携带本批相关的旧认识，留出来源空间，不用无关条目填满预算。 */
 export function relatedConsolidationRecords(input: ConsolidationInput, memories: Memory[], continuity: ContinuityRecord[]) {
   const text = input.sources.map(source => source.text).join('\n');

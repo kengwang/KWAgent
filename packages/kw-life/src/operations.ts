@@ -143,7 +143,7 @@ export class Operations {
     });
     await new Promise<void>((resolve, reject) => { this.server!.once('error', reject); this.server!.listen(socket, resolve); });
     if (process.platform !== 'win32') await chmod(socket, 0o600);
-    this.timer = setInterval(() => { if (!this.life.started && !this.life.maintenance) this.life.track(this.life.start()); this.life.track(this.checkBackup()); for (const role of this.life.store.roles()) if (role.state === 'active') { this.life.enqueue(role.id); this.life.track(this.life.retryDeferredMemory(role.id), role.id); } }, 60000);
+    this.timer = setInterval(() => { if (!this.life.started && !this.life.maintenance) this.life.track(this.life.start()); this.life.track(this.checkBackup()); for (const role of this.life.store.roles()) if (role.state === 'active') { this.life.enqueue(role.id); this.life.track(this.life.checkDailyMemory(role.id), role.id); } }, 60000);
     this.timer.unref();
   }
   private async checkBackup(): Promise<void> {

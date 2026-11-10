@@ -17,7 +17,7 @@ import {
 import type { AppConfig, Json, Memory, MemoryInput, Recall, ContinuityScene, Role } from '@kwagent/core';
 import { createHash } from 'node:crypto';
 import { Continuity, continuityGuidance } from './continuity.ts';
-import { consolidationMessages, hasConsolidationContent, consolidationDue, relatedConsolidationRecords, consolidationInputTokens, type ConsolidationInput } from './consolidation-input.ts';
+import { consolidationMessages, hasConsolidationContent, relatedConsolidationRecords, consolidationInputTokens, type ConsolidationInput } from './consolidation-input.ts';
 import { localRecall, mergeRecall, queryTerms } from './local-recall.ts';
 import { parseConsolidationOutput, consolidationSchema } from './consolidation-output.ts';
 import { ConsolidationBatches } from './consolidation-batches.ts';
@@ -192,7 +192,7 @@ export class Mind extends Service {
   }
 
   consolidationStatus(roleId: string): ConsolidationOutcome | null { const value = this.store.meta(`consolidation-status:${roleId}`); return value ? consolidationOutcomeSchema.parse(JSON.parse(value)) : null; }
-  consolidationDue(roleId: string): boolean { return consolidationDue(this.store.unprocessed(roleId, 50)); }
+  hasPendingConsolidation(roleId: string): boolean { return this.store.unprocessed(roleId, 1).length > 0; }
   async consolidate(agent: Agent, roleId: string, signal?: AbortSignal): Promise<ConsolidationOutcome> {
     signal?.throwIfAborted();
     const existing = this.consolidating.get(roleId);
